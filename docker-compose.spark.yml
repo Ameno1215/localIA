@@ -1,0 +1,71 @@
+# Surcharge pour le DGX Spark (ARM64, GB10, 128 Go unifiés).  ⚠ NON TESTÉ : à valider sur le Spark.
+#
+#   cp .env.spark.example .env   (puis remplir les secrets)
+#   ./scripts/01-telecharger-modeles.sh --spark
+#   docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d
+#
+# Différences avec le PC :
+#  - modèle plus gros (voir .env.spark.example), mêmes noms côté clients (qwen-local, bge-m3)
+#  - TEI n'existe pas en ARM64 : embeddings et reranker servis par vLLM (mode pooling), sur GPU
+#  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur /, normes (MCP) sur /mcp avec jeton
+#  - le serveur MCP n'expose que rechercher_docs (OUTILS_CODE=0) : les agents travaillent sur les postes
+
+x-vllm-pooling: &vllm-pooling
+  image: vllm/vllm-openai:v0.30.0
+  entrypoint: ["vllm", "serve"]
+  environment:
+    HF_HUB_OFFLINE: "1"
+  volumes: ["./models:/models:ro"]
+  ipc: host
+  deploy:
+    resources:
+      reservations:
+        devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+  restart: unless-stopped
+
+services:
+  vllm:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+
+  tei-embed:
+    <<: *vllm-pooling
+    command: >
+      /models/bge-m3 --served-model-name bge-m3 --runner pooling
+      --host 0.0.0.0 --port 80 --gpu-memory-utilization 0.04 --max-model-len 8192
+
+  tei-rerank:
+    <<: *vllm-pooling
+    command: >
+      /models/bge-reranker-v2-m3 --served-model-name bge-reranker --runner pooling
+      --host 0.0.0.0 --port 80 --gpu-memory-utilization 0.04 --max-model-len 8192
+
+  mcp-docs:
+    environment:
+      OUTILS_CODE: "0"
+      RAG_BACKEND: vllm
+    ports: !reset []
+
+  litellm:
+    ports: !override
+      - "127.0.0.1:4000:4000"
+
+  open-webui:
+    ports: !override
+      - "127.0.0.1:3000:8080"
+
+  # Seule porte d'entrée réseau. Certificat interne : distribuer la CA aux postes (voir GUIDE.md).
+  caddy:
+    image: caddy:2.10.2
+    environment:
+      SPARK_HOSTNAME: ${SPARK_HOSTNAME}
+      MCP_TOKEN: ${MCP_TOKEN}
+    volumes:
+      - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports: ["443:443"]
+    depends_on: [litellm, mcp-docs]
+    restart: unless-stopped
+
+volumes:
+  caddy-data:

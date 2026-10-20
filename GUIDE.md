@@ -1,0 +1,479 @@
+# Guide de l'IA locale
+
+Ce guide explique comment fonctionne la plateforme d'IA locale et comment s'en servir au quotidien : coder avec un agent, interroger les normes internes, gérer les accès. Tout tourne sur nos machines, sans envoyer de données sur internet.
+
+Aujourd'hui, la plateforme tourne sur un PC de test (RTX 4060, 8 Go de VRAM). Elle est prévue pour passer telle quelle sur le DGX Spark, avec un modèle plus gros. La section 8 décrit ce passage.
+
+---
+
+## 1. Vue d'ensemble
+
+### Le principe
+
+L'agent de code tourne **sur le poste du développeur** : il lit et modifie tes fichiers et lance tes commandes chez toi. Seul le modèle (le « cerveau ») tourne sur le serveur. Entre les deux ne circule que du texte : la demande et la réponse.
+
+```
+ Poste développeur                               Serveur (PC de test, puis DGX Spark)
+ ┌────────────────────────────────┐              ┌──────────────────────────────────────────┐
+ │ OpenCode (terminal)            │   requêtes   │ LiteLLM :4000  clés, quotas, file d'attente│
+ │  - lit / écrit TES fichiers    │ ───────────> │   └─> vLLM :8000  modèle "qwen-local" (GPU)│
+ │  - lance TES tests, git, etc.  │   (texte)    │                                          │
+ │  - montre les diffs, chat      │ ───────────> │ MCP docs-internes :9901  recherche normes │
+ └────────────────────────────────┘              │   └─> Qdrant + bge-m3 + reranker          │
+                                                 │ Open WebUI :3000  chat dans le navigateur │
+                                                 └──────────────────────────────────────────┘
+```
+
+### Les briques
+
+| Brique | Rôle | Port |
+|---|---|---|
+| **vLLM** | Fait tourner le modèle de langage sur le GPU. Il traite plusieurs requêtes en parallèle et met les autres en file d'attente. | 8000 (local) |
+| **LiteLLM** | Porte d'entrée unique vers les modèles. Il donne une clé API à chaque personne, applique des quotas et enregistre la consommation. | 4000 |
+| **Postgres** | Base de données de LiteLLM : clés, utilisateurs, consommation. | interne |
+| **Qdrant** | Base « vectorielle » : stocke les morceaux de tes documents indexés pour la recherche. | 6333 (local) |
+| **TEI bge-m3** | Transforme un texte en vecteur (embedding), pour trouver les passages qui parlent du même sujet. Tourne sur CPU. | interne |
+| **TEI reranker** | Parmi les passages trouvés, garde ceux qui répondent vraiment à la question. Tourne sur CPU. | interne |
+| **MCP docs-internes** | Serveur d'outils pour les agents. Son outil principal, `rechercher_docs`, cherche dans les normes. | 9901 |
+| **Open WebUI** | Chat dans le navigateur, avec un compte par personne et l'historique des conversations. | 3000 |
+| **OpenCode** | Agent de code dans le terminal, l'équivalent local de Claude Code. **C'est l'outil principal pour coder.** | sur le poste |
+| **Agent NAT** | Agent NVIDIA (NeMo Agent Toolkit) configuré en YAML. Utile pour automatiser une tâche précise. | sur le serveur |
+| **NemoClaw** | Agent NVIDIA isolé dans un sandbox. Réservé aux agents autonomes, voir la section 6. | sur le serveur |
+| **Panneau web** | Démarre et arrête les services, affiche leur état et rappelle les commandes. | 7000 (local) |
+
+### Le chemin d'une question sur les normes
+
+1. Tu demandes à l'agent : « Que dit la norme sur les logs ? ».
+2. L'agent appelle l'outil `rechercher_docs`.
+3. bge-m3 trouve les 20 passages les plus proches dans Qdrant.
+4. Le reranker garde les 5 meilleurs.
+5. Le modèle rédige la réponse à partir de ces passages et cite la source (fichier, page).
+
+### Le chemin d'une modification de code
+
+1. Tu demandes à OpenCode : « Ajoute un score au jeu ».
+2. OpenCode lit tes fichiers en local.
+3. Il envoie la demande et le contenu utile au modèle.
+4. Le modèle répond par des actions : modifier tel fichier, lancer telle commande.
+5. OpenCode te montre le diff et attend ton accord.
+6. Il applique la modification sur ton disque et lance les tests chez toi.
+
+---
+
+## 2. Les modèles
+
+| Nom (vu par les clients) | Ce que c'est | Où |
+|---|---|---|
+| `qwen-local` | Le modèle de langage principal : chat, code, appels d'outils. Sur le PC de test, c'est **Qwen3.5-4B** quantifié en AWQ 4 bits, avec 64K tokens de contexte et le raisonnement activé. | vLLM, GPU |
+| `normes` | Le même modèle, plus un adaptateur LoRA entraîné sur les normes. **Pas encore disponible** (voir la section 6). | vLLM, GPU |
+| `bge-m3` | Modèle d'embeddings pour la recherche dans les documents. Il ne sait pas discuter. | TEI, CPU |
+| reranker `bge-reranker-v2-m3` | Trie les passages trouvés par pertinence. Il n'est pas exposé aux clients. | TEI, CPU |
+
+Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` peut changer (un 4B aujourd'hui, un 35B sur le Spark) sans rien modifier chez les utilisateurs.
+
+### Changer de modèle
+
+1. Mets les poids dans `models/<dossier>`.
+2. Dans `.env`, règle :
+   - `VLLM_MODEL=<dossier>` ;
+   - `VLLM_MAX_MODEL_LEN`, la taille de contexte ;
+   - `VLLM_TOOL_PARSER`, le format d'appels d'outils de la famille du modèle (`hermes` ou `qwen3_coder`) ;
+   - `VLLM_EXTRA_ARGS`, les options propres au modèle.
+3. Redémarre vLLM : bouton **Redémarrer** sur la carte `vllm` du panneau, ou `docker compose up -d vllm`.
+4. Vérifie dans les logs qu'il démarre, et note la ligne `GPU KV cache size`.
+
+**Historique sur le PC de test :**
+- **Qwen3-4B-Instruct-2507 FP8 :** 20K de contexte au maximum, et du code souvent cassé en mode agent.
+- **Qwen3.5-4B AWQ :** 64K de contexte, un jeu complet et testé du premier coup. C'est le modèle retenu.
+
+L'ancien modèle reste dans `models/` (13 Go). Tu peux supprimer ses deux dossiers si tu as besoin de place.
+
+---
+
+## 3. Démarrer et arrêter
+
+### Le panneau web (le plus simple)
+
+Lance-le, puis ouvre http://localhost:7000 :
+
+```bash
+./scripts/panneau.sh
+```
+
+- **Modes rapides :**
+  - *Tout démarrer* ;
+  - *Mode chat* : modèle et Open WebUI ;
+  - *Mode agent de code* : modèle, RAG et outils ;
+  - *Mode fine-tuning* : libère le GPU ;
+  - *Tout arrêter*.
+- **Une carte par service :** son état, sa RAM et son CPU, et les boutons Démarrer, Arrêter, Redémarrer, Logs et Ouvrir.
+- **Jauges :** l'occupation du GPU et de la RAM.
+- **NemoClaw :** démarrer ou arrêter le sandbox.
+
+Le panneau n'est accessible que depuis le PC lui-même.
+
+### En ligne de commande
+
+Les commandes se lancent depuis le dossier du projet.
+
+| Action | Commande |
+|---|---|
+| Tout démarrer | `docker compose up -d` |
+| État des services | `docker compose ps` |
+| Tout arrêter (rien n'est perdu) | `docker compose stop` |
+| Arrêter un seul service | `docker compose stop vllm` |
+| Redémarrer un service | `docker compose restart litellm` |
+| Lire les logs | `docker compose logs -f vllm` |
+
+vLLM met **1 à 2 minutes** à démarrer. Il est prêt quand la carte du panneau affiche « En marche », ou quand `curl -s localhost:8000/health` répond.
+
+Au redémarrage du PC, les services repartent seuls, sauf ceux que tu avais arrêtés avec `stop`. Le panneau web, lui, est à relancer à la main.
+
+**N'utilise pas** `docker compose down -v` : le `-v` efface les comptes, les clés et l'index des documents.
+
+---
+
+## 4. Coder avec l'agent (OpenCode)
+
+OpenCode est un agent de code dans le terminal. Il fonctionne comme Claude Code :
+- tu discutes avec lui ;
+- il lit et modifie les fichiers de ton projet ;
+- il lance des commandes (tests, git, ton programme) ;
+- il te montre chaque modification et attend ton accord ;
+- la conversation continue d'une demande à l'autre.
+
+### Installer sur un poste (une fois)
+
+Prérequis : Node.js 20 ou plus récent (déjà présent sur le PC de test via nvm), et de préférence ripgrep.
+
+```bash
+sudo apt install ripgrep
+```
+
+1. **Crée ta clé personnelle.** C'est l'admin qui le fait, sur le serveur. La clé ne s'affiche qu'une fois : garde-la.
+   ```bash
+   ./scripts/creer-cle-utilisateur.sh prenom.nom
+   ```
+2. **Installe et configure OpenCode.** Le script demande la clé, puis vérifie qu'elle fonctionne.
+   ```bash
+   ./scripts/installer-opencode.sh
+   ```
+3. **Ouvre un nouveau terminal**, ou lance `source ~/.bashrc`.
+
+Le script :
+- installe OpenCode 1.18.33 ;
+- enregistre ta clé dans `~/.config/ia-locale/env` (lisible par toi seul) ;
+- écrit la config `~/.config/opencode/opencode.json`, qui pointe vers le modèle et la recherche dans les normes.
+
+Tu peux le relancer à tout moment pour mettre à jour la config.
+
+### Première session
+
+1. **Va dans ton projet**, de préférence un dépôt git propre, sans modification en cours :
+   ```bash
+   cd mon-projet
+   ```
+2. **Copie le modèle de consignes**, puis adapte-le (commande de tests, fichiers à ne pas toucher) :
+   ```bash
+   cp ~/Documents/IA\ locale/clients/AGENTS.md .
+   ```
+3. **Lance l'agent :**
+   ```bash
+   opencode
+   ```
+
+Écris ta demande et valide. Quand l'agent veut modifier un fichier ou lancer une commande, il affiche le diff ou la commande et te demande l'autorisation. Accepte ou refuse, puis enchaîne ta demande suivante dans la même conversation.
+
+**Raccourcis utiles dans OpenCode :**
+
+| Commande | Effet |
+|---|---|
+| `/undo` | Annule la dernière modification de l'agent |
+| `/redo` | Rétablit ce qui a été annulé |
+| `/new` | Démarre une nouvelle conversation |
+| `/sessions` | Reprend une conversation précédente |
+| `/compact` | Résume la conversation pour libérer du contexte, utile quand elle devient longue |
+| `/models` | Choisit le modèle (`qwen-local`, ou `normes` plus tard) |
+| `Tab` | Bascule entre l'agent *build* (modifie les fichiers) et l'agent *plan* (réfléchit sans rien modifier) |
+| `/exit` | Quitte |
+
+### En une seule commande (sans interface)
+
+```bash
+opencode run "Ajoute un test pour la fonction verifier"
+```
+
+- `--continue` (ou `-c`) poursuit la dernière conversation. Exemple : `opencode run -c "Le test échoue, corrige"`.
+- `--auto` autorise automatiquement les modifications et les commandes. **À réserver à un projet de test**, car l'agent ne te demande plus rien.
+
+### Bien formuler ses demandes (petit modèle)
+
+Avec un modèle de 4B, la qualité dépend beaucoup de la précision de la demande.
+
+- **Une demande à la fois.** Mieux vaut cinq petites étapes qu'un « fais-moi toute l'application ».
+- **Nomme les fichiers et les fonctions.** Par exemple : « Dans `jeu.py`, la fonction `verifier(proposition, secret)` doit renvoyer `'plus'`, `'moins'` ou `'gagné'` ».
+- **Demande toujours de lancer les tests**, en donnant la commande exacte.
+- **Colle l'erreur exacte** quand quelque chose plante : « Voici l'erreur : … Corrige et relance les tests ».
+- **Vérifie toujours le résultat réel** (`git diff`, les tests, le programme). Un agent peut annoncer « c'est fait » alors que ce n'est pas le cas.
+
+Exemple réel sur le PC de test (projet `~/projets/jeu-test`) :
+1. **Première demande :** « Crée jeu.py : un jeu où l'ordinateur choisit un nombre entre 1 et 100 et le joueur doit le deviner… Crée test_jeu.py avec 3 tests pytest, puis lance python3 -m pytest -q. » En 30 secondes, il a produit un jeu complet et jouable, et les 3 tests passaient.
+2. **Deuxième demande (`-c`) :** « Si je tape q, le programme plante. Corrige-le et relance les tests. » En 25 secondes, le bug était corrigé et vérifié par l'agent lui-même.
+
+### La recherche dans les normes depuis l'agent
+
+OpenCode a accès à l'outil `rechercher_docs`. Le fichier `AGENTS.md` lui demande de s'en servir dès qu'une question touche une norme. Tu peux aussi le demander explicitement : « Cherche dans nos normes ce qui concerne la journalisation, puis vérifie si `jeu.py` les respecte ».
+
+Pour voir les recherches qu'il fait réellement :
+
+```bash
+docker compose logs -f mcp-docs
+```
+
+---
+
+## 5. Les normes et documents internes (RAG)
+
+1. **Ajoute tes documents.** Dépose les fichiers (PDF, DOCX, MD, TXT) dans `docs-internes/`. Les sous-dossiers sont acceptés.
+2. **Lance l'indexation.** Le mode agent doit tourner. Seuls les fichiers nouveaux ou modifiés sont traités :
+   ```bash
+   docker compose exec mcp-docs python ingest.py
+   ```
+3. **Pour tout réindexer** (par exemple après avoir supprimé des fichiers) :
+   ```bash
+   docker compose exec mcp-docs python ingest.py --reset
+   ```
+4. **Vérifie ce qui est trouvé** pour une question :
+   ```bash
+   docker compose exec mcp-docs python -c "from server import rechercher_docs; print(rechercher_docs('ma question', 3))"
+   ```
+
+Les documents sont découpés en morceaux d'environ 1 200 caractères. Les PDF scannés (des images, sans texte) ne sont pas lisibles et devront d'abord passer par une reconnaissance de caractères (OCR).
+
+Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies normes.
+
+---
+
+## 6. Autres usages
+
+### Chat dans le navigateur (Open WebUI)
+
+1. Lance le *Mode chat* depuis le panneau, puis ouvre http://localhost:3000.
+2. Crée ton compte. Le premier compte créé devient administrateur.
+3. Pour que le chat puisse chercher dans les normes : Réglages admin → Outils externes → ajoute le serveur MCP `http://mcp-docs:9901/mcp`.
+
+### Agent NVIDIA NAT
+
+C'est un agent défini en YAML dans `agent/config.yml`. Il travaille sur le dossier `workspace/` du serveur, avec les outils du serveur MCP. Il est utile pour une tâche automatisée et répétable. Pour coder sur ton propre projet, préfère OpenCode.
+
+```bash
+. ~/.config/ia-locale/env
+NAT_API_KEY=$LITELLM_API_KEY .venv/bin/nat run --config_file agent/config.yml --input "Que dit la norme sur les tests ?"
+```
+
+### NemoClaw (agent NVIDIA isolé)
+
+NemoClaw enferme un agent dans un sandbox : réseau filtré, accès disque limité, copie du projet. **Ce n'est pas l'outil pour coder au quotidien**, car il faut envoyer le projet, puis récupérer un patch. Il sera utile sur le Spark pour des agents autonomes, comme une revue de code automatique ou des tâches de nuit.
+
+Le sandbox `patate` est installé et **arrêté**. Pour le démarrer :
+
+```bash
+nemo-deepagents patate start
+```
+
+Ensuite, deux façons d'utiliser l'agent :
+- **en chat**, dans le terminal :
+  ```bash
+  nemo-deepagents launch patate
+  ```
+- **avec une tâche précise**, sans interaction :
+  ```bash
+  nemo-deepagents patate exec --workdir /sandbox -- dcode -n "<tâche>"
+  ```
+
+Pour faire passer des fichiers entre le PC et le sandbox :
+
+```bash
+nemo-deepagents patate upload <fichier-ou-dossier> /sandbox
+nemo-deepagents patate download /sandbox/<chemin> <destination>
+```
+
+Pour l'arrêter :
+
+```bash
+nemo-deepagents patate stop
+```
+
+Le bouton du panneau fait la même chose. Après un changement de modèle, il n'y a rien à refaire : NemoClaw utilise toujours le nom `qwen-local`.
+
+### Entraîner le modèle sur les normes (LoRA)
+
+Ce n'est **pas encore fait**, et c'est à faire une fois tes vraies normes indexées.
+
+> Le fine-tuning apprend au modèle le **style et le vocabulaire** des normes. Il ne lui fait pas retenir les règles exactes de façon fiable. **La source de vérité reste la recherche dans les documents.** Le mieux est de combiner les deux.
+
+1. **Télécharge le modèle de base** en pleine précision (`models/Qwen3.5-4B`, ~9 Go). Le script `./scripts/01-telecharger-modeles.sh` le fait.
+2. **Génère le jeu de questions/réponses** à partir des documents indexés, puis relis-en un échantillon :
+   ```bash
+   source .env && docker compose exec -e LITELLM_KEY=$LITELLM_MASTER_KEY mcp-docs python /finetune/generer_dataset.py
+   ```
+3. **Passe en *Mode fine-tuning*** depuis le panneau, pour libérer le GPU.
+4. **Lance l'entraînement :**
+   ```bash
+   python3 -m venv .venv-finetune && .venv-finetune/bin/pip install -r finetune/requirements.txt
+   .venv-finetune/bin/python finetune/entrainer_lora.py
+   ```
+5. **Active l'adaptateur.** Dans `.env`, décommente la ligne `VLLM_LORA_ARGS=…`, puis redémarre vLLM. Le modèle `normes` devient disponible dans OpenCode, avec `/models`.
+
+---
+
+## 7. Plusieurs utilisateurs
+
+- **Une clé par personne :** `./scripts/creer-cle-utilisateur.sh prenom.nom`. Par défaut, la clé autorise 2 requêtes en parallèle et 60 par minute. Les limites se règlent dans le script.
+- **Suivi de consommation :** http://localhost:4000/ui, avec la clé maître (`LITELLM_MASTER_KEY` dans `.env`).
+- **File d'attente :** vLLM traite `VLLM_MAX_SEQS` requêtes à la fois (2 sur le PC de test, 8 prévues sur le Spark). Les suivantes attendent leur tour, sans erreur.
+- **La clé maître est réservée à l'admin.** Ne la donne jamais : chaque personne doit avoir sa propre clé.
+
+---
+
+## 8. Passage au DGX Spark
+
+> Les fichiers sont prêts, mais **pas encore testés sur le Spark**. Les points marqués ⚠ sont à vérifier sur place.
+
+### Côté serveur (sur le Spark)
+
+1. **Copie le projet** sur le Spark : tout le dossier, sauf `models/`, `.venv*` et `.env`.
+2. **Télécharge les modèles du Spark** (~30 Go), avec internet ou depuis un disque de transfert :
+   ```bash
+   ./scripts/01-telecharger-modeles.sh --spark
+   ```
+3. **Prépare la configuration :**
+   ```bash
+   cp .env.spark.example .env
+   ```
+   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`. ⚠ Vérifie le parser d'outils recommandé pour Qwen3.6 sur recipes.vllm.ai.
+4. **Démarre la stack :**
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d
+   ```
+5. **Vérifie** que vLLM charge le modèle de 35B : il démarre en plusieurs minutes, et la commande `docker compose logs -f vllm` montre sa progression.
+6. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes :
+   ```bash
+   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./spark-ca.crt
+   ```
+
+Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
+- **Modèle :** `Qwen3.6-35B-A3B` NVFP4 (profil recommandé par NVIDIA), avec 128K de contexte et 8 requêtes en parallèle.
+- **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64. ⚠ À valider.
+- **Accès réseau :** seul **Caddy** (HTTPS, port 443) est joignable depuis le réseau. LiteLLM est servi sur `/`, la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Tout le reste n'écoute qu'en local.
+- **Serveur MCP :** il n'expose que `rechercher_docs` (`OUTILS_CODE=0`). Les outils fichiers et commandes ne doivent jamais être joignables par le réseau.
+
+### Côté postes (chaque développeur)
+
+1. **Crée sa clé** sur le Spark :
+   ```bash
+   ./scripts/creer-cle-utilisateur.sh prenom.nom
+   ```
+2. **Lance l'installation sur son poste**, avec l'adresse du Spark :
+   ```bash
+   ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 131072 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
+   ```
+
+C'est la seule différence avec le PC de test : `opencode` s'utilise exactement de la même façon.
+
+### Plus tard
+
+- **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
+- **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
+- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec le 35B.
+
+---
+
+## 9. Dépannage
+
+| Symptôme | Cause | Solution |
+|---|---|---|
+| vLLM redémarre en boucle avec `operator torchvision::nms does not exist` | Image vLLM incohérente (le tag `-cu129` de la v0.30.0) | Utiliser `vllm/vllm-openai:v0.30.0`, déjà en place |
+| vLLM : `CUDA driver version is insufficient` | Driver NVIDIA trop ancien | Driver ≥ 580 (595 installé) |
+| vLLM : `invalid loads value` au démarrage | Les guillemets JSON de `VLLM_EXTRA_ARGS` ont été retirés | Entourer le JSON d'apostrophes : `'{"cle":valeur}'` |
+| vLLM : pas assez de mémoire pour le contexte | `VLLM_MAX_MODEL_LEN` trop grand pour la VRAM | Baisser `VLLM_MAX_MODEL_LEN` ou `VLLM_GPU_UTIL` dans `.env` |
+| Plus de RAM disponible, PC lent | TEI qui garde 10 à 15 Go par instance | Déjà corrigé (`MALLOC_ARENA_MAX`, lots réduits). Vérifier avec `docker stats` |
+| OpenCode ou NAT : `401` / clé refusée | Clé incomplète ou mal collée | `curl -s localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_API_KEY"`, puis recréer la clé et relancer `installer-opencode.sh` |
+| `opencode : commande introuvable` | Terminal ouvert avant l'installation | `source ~/.bashrc` |
+| OpenCode en mode `run` : « permission requested… auto-rejecting » | Les modifications demandent ton accord, et il n'y a pas d'interface en mode `run` | Utiliser `opencode` (interactif), ou `--auto` sur un projet de test |
+| L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
+| L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
+| NemoClaw : `doctor` affiche `Inference route … 503` | La passerelle OpenShell ne joint pas vLLM | Vérifier que `OPENSHELL_BRIDGE_IP` (dans `.env`) correspond à `docker network inspect openshell-docker`, puis `docker compose up -d vllm` |
+| NemoClaw : pip bloqué (`403 Forbidden`) | Pare-feu du sandbox | Télécharger les paquets sur le poste, puis les installer hors ligne dans le sandbox (`pip download`, `upload`, `pip install --no-index`) |
+
+---
+
+## 10. Référence
+
+### Arborescence
+
+```
+IA locale/
+├── GUIDE.md                    ce guide
+├── README.md                   démarrage rapide
+├── docker-compose.yml          la stack (PC de test)
+├── docker-compose.spark.yml    surcharge pour le DGX Spark
+├── .env / .env.example         réglages et secrets du PC (.env n'est jamais partagé)
+├── .env.spark.example          réglages du Spark
+├── config/
+│   ├── litellm.yaml            modèles exposés aux clients
+│   └── Caddyfile.spark         proxy HTTPS du Spark
+├── models/                     poids des modèles (hors git)
+├── docs-internes/              tes normes et documents (indexés pour la recherche)
+├── services/mcp-docs/          serveur d'outils : server.py (recherche), ingest.py (indexation)
+├── clients/
+│   ├── opencode.json           modèle de config OpenCode (utilisé par le script d'installation)
+│   └── AGENTS.md               consignes de l'agent, à copier dans chaque projet
+├── agent/config.yml            agent NVIDIA NAT
+├── finetune/                   génération du jeu d'entraînement et entraînement LoRA
+├── loras/                      adaptateurs entraînés
+├── workspace/                  projet de test de l'agent NAT
+├── panneau/                    panneau web (server.py, index.html)
+└── scripts/
+    ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
+    ├── 01-telecharger-modeles.sh   poids des modèles (--spark pour le Spark)
+    ├── creer-cle-utilisateur.sh    clé LiteLLM pour une personne
+    ├── installer-opencode.sh   OpenCode sur un poste
+    └── panneau.sh              lance le panneau web
+```
+
+### Ports
+
+| Port | Service | Accessible depuis |
+|---|---|---|
+| 3000 | Open WebUI | ce PC |
+| 4000 | LiteLLM (API des modèles et interface d'admin `/ui`) | ce PC (le Spark : via Caddy en 443) |
+| 6333 | Qdrant (tableau de bord : `/dashboard`) | ce PC |
+| 7000 | Panneau web | ce PC |
+| 8000 | vLLM | ce PC, et le sandbox NemoClaw |
+| 9901 | MCP docs-internes | ce PC (le Spark : via Caddy, `/mcp`) |
+
+### Variables de `.env`
+
+| Variable | Rôle |
+|---|---|
+| `LITELLM_MASTER_KEY` | Clé admin de LiteLLM |
+| `POSTGRES_PASSWORD`, `WEBUI_SECRET_KEY` | Secrets internes |
+| `VLLM_MODEL` | Dossier du modèle dans `models/`, servi sous le nom `qwen-local` |
+| `VLLM_MAX_MODEL_LEN` | Contexte maximal par requête, en tokens |
+| `VLLM_GPU_UTIL` | Part de la VRAM réservée à vLLM (0 à 1) |
+| `VLLM_MAX_SEQS` | Nombre de requêtes traitées en parallèle |
+| `VLLM_TOOL_PARSER` | Format des appels d'outils du modèle |
+| `VLLM_EXTRA_ARGS` | Options vLLM propres au modèle |
+| `VLLM_LORA_ARGS` | Active l'adaptateur `normes` (vide tant qu'il n'est pas entraîné) |
+| `MCP_OUTILS_CODE` | 1 : outils fichiers/commandes (agent NAT local). 0 : seulement la recherche dans les normes |
+| `OPENSHELL_BRIDGE_IP` | Adresse du pont NemoClaw (vide si NemoClaw est absent) |
+| `SPARK_HOSTNAME`, `MCP_TOKEN` | Spark uniquement : nom du serveur et jeton d'équipe pour les normes |
+
+### Fichiers sur chaque poste (créés par `installer-opencode.sh`)
+
+| Fichier | Contenu |
+|---|---|
+| `~/.config/ia-locale/env` | Ta clé, le jeton MCP et les options hors ligne (lisible par toi seul) |
+| `~/.config/opencode/opencode.json` | Serveur, modèles, recherche dans les normes, autorisations |
+| `~/.bashrc` | Une ligne qui charge `~/.config/ia-locale/env` |

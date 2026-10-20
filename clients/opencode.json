@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "IA locale",
+      "options": {
+        "baseURL": "__SERVEUR__/v1",
+        "apiKey": "{env:LITELLM_API_KEY}"
+      },
+      "models": {
+        "qwen-local": {
+          "name": "Modèle local (qwen-local)",
+          "limit": { "context": __CONTEXTE__, "output": 4096 }
+        },
+        "normes": {
+          "name": "Modèle + LoRA normes (après fine-tuning)",
+          "limit": { "context": __CONTEXTE__, "output": 4096 }
+        }
+      }
+    }
+  },
+  "model": "local/qwen-local",
+  "small_model": "local/qwen-local",
+  "mcp": {
+    "docs-internes": {
+      "type": "remote",
+      "url": "__MCP__",
+      "enabled": true,
+      "oauth": false,
+      "timeout": 10000,
+      "headers": { "Authorization": "Bearer {env:MCP_TOKEN}" }
+    }
+  },
+  "tools": {
+    "docs-internes_lister_fichiers": false,
+    "docs-internes_lire_fichier": false,
+    "docs-internes_ecrire_fichier": false,
+    "docs-internes_executer_commande": false
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": "ask"
+  },
+  "instructions": ["AGENTS.md"],
+  "share": "disabled",
+  "autoupdate": false
+}

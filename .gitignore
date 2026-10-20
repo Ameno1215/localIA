@@ -1,0 +1,22 @@
+# Secrets : seuls les .env*.example sont versionnés
+.env
+
+# Poids des modèles (~20 Go, téléchargés par scripts/01-telecharger-modeles.sh)
+models/
+
+# Environnements Python
+.venv*/
+__pycache__/
+.pytest_cache/
+
+# Normes sous licence (PDF ISO, GlobalPlatform) : copiées à la main, jamais publiées
+docs-internes/*
+!docs-internes/*.md
+
+# Données d'exécution : index, adaptateurs entraînés, projets des agents
+data/*
+loras/*
+workspace/
+
+# Réglages locaux de Claude Code
+.claude/settings.local.json

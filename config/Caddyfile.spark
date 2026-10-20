@@ -1,0 +1,18 @@
+# Proxy HTTPS du Spark (⚠ non testé). Seul point d'accès depuis le réseau de l'équipe.
+#   https://<SPARK_HOSTNAME>/v1/...  -> LiteLLM (clé personnelle de chaque développeur)
+#   https://<SPARK_HOSTNAME>/mcp     -> recherche dans les normes (jeton d'équipe MCP_TOKEN)
+{$SPARK_HOSTNAME} {
+	tls internal
+
+	handle /mcp* {
+		@autorise header Authorization "Bearer {$MCP_TOKEN}"
+		handle @autorise {
+			reverse_proxy mcp-docs:9901
+		}
+		respond "jeton MCP manquant ou invalide" 401
+	}
+
+	handle {
+		reverse_proxy litellm:4000
+	}
+}

@@ -1,0 +1,210 @@
+"""Panneau de contrôle de la stack IA locale.
+
+Lancement :  ./scripts/panneau.sh   puis ouvrir http://localhost:7000
+Écoute uniquement sur 127.0.0.1. Aucune dépendance (bibliothèque standard Python).
+"""
+
+import json
+import os
+import subprocess
+import threading
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+PORT = int(os.environ.get("PANNEAU_PORT", "7000"))
+PROJET = Path(__file__).resolve().parent.parent
+PAGE = Path(__file__).resolve().parent / "index.html"
+PAGE_GUIDE = Path(__file__).resolve().parent / "guide.html"
+GUIDE = PROJET / "GUIDE.md"
+SANDBOX = os.environ.get("NEMOCLAW_SANDBOX", "patate")
+NEMO = str(Path.home() / ".local/bin/nemo-deepagents")
+
+# Services du docker-compose.yml : rôle + sonde HTTP facultative (depuis l'hôte)
+SERVICES = {
+    "vllm": {"role": "LLM sur GPU (qwen-local)", "sonde": "http://127.0.0.1:8000/health", "lien": None},
+    "litellm": {"role": "Passerelle : clés, quotas, file", "sonde": "http://127.0.0.1:4000/health/liveliness", "lien": "http://localhost:4000/ui"},
+    "postgres": {"role": "Base de LiteLLM (clés, conso)", "sonde": None, "lien": None},
+    "open-webui": {"role": "Chat web multi-comptes", "sonde": "http://127.0.0.1:3000/health", "lien": "http://localhost:3000"},
+    "qdrant": {"role": "Base vectorielle du RAG", "sonde": "http://127.0.0.1:6333/readyz", "lien": "http://localhost:6333/dashboard"},
+    "tei-embed": {"role": "Embeddings bge-m3 (CPU)", "sonde": None, "lien": None},
+    "tei-rerank": {"role": "Reranker bge-m3 (CPU)", "sonde": None, "lien": None},
+    "mcp-docs": {"role": "Outils agents : normes + code", "sonde": None, "lien": None},
+}
+
+# Modes prêts à l'emploi : services à démarrer (les autres sont arrêtés)
+MODES = {
+    "tout": list(SERVICES),
+    "chat": ["vllm", "litellm", "postgres", "open-webui"],
+    "agent": ["vllm", "litellm", "postgres", "qdrant", "tei-embed", "tei-rerank", "mcp-docs"],
+    "finetune": ["qdrant", "tei-embed", "tei-rerank", "mcp-docs"],
+    "rien": [],
+}
+
+verrou = threading.Lock()  # une action docker à la fois
+
+
+def lancer(cmd: list[str], timeout: int = 300, limite: int | None = 6000) -> dict:
+    """Exécute une commande dans le dossier du projet ; `limite` tronque la sortie affichée."""
+    env = dict(os.environ, PATH=f"{Path.home()}/.local/bin:{os.environ.get('PATH', '')}")
+    try:
+        r = subprocess.run(cmd, cwd=PROJET, capture_output=True, text=True, timeout=timeout, env=env)
+        sortie = r.stdout + r.stderr
+        return {"ok": r.returncode == 0, "sortie": sortie[-limite:] if limite else sortie}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "sortie": f"Délai dépassé ({timeout} s)"}
+    except FileNotFoundError as e:
+        return {"ok": False, "sortie": str(e)}
+
+
+def sonder(url: str | None) -> bool | None:
+    if not url:
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            return r.status < 500
+    except Exception:
+        return False
+
+
+def modele_vllm() -> str:
+    """Dossier du modèle servi (VLLM_MODEL dans .env)."""
+    for ligne in (PROJET / ".env").read_text().splitlines():
+        if ligne.startswith("VLLM_MODEL="):
+            return ligne.split("=", 1)[1].strip()
+    return "?"
+
+
+def etat_services() -> list[dict]:
+    r = lancer(["docker", "compose", "ps", "-a", "--format", "json"], timeout=30, limite=None)
+    conteneurs = {}
+    for ligne in r["sortie"].splitlines():
+        ligne = ligne.strip()
+        if ligne.startswith("{"):
+            c = json.loads(ligne)
+            conteneurs[c["Service"]] = c
+    stats = {}
+    s = lancer(["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}"], timeout=30, limite=None)
+    for ligne in s["sortie"].splitlines():
+        parts = ligne.split("\t")
+        if len(parts) == 3:
+            stats[parts[0]] = {"ram": parts[1].split(" / ")[0], "cpu": parts[2]}
+    resultat = []
+    for nom, info in SERVICES.items():
+        c = conteneurs.get(nom, {})
+        etat = c.get("State", "absent")
+        pret = sonder(info["sonde"]) if etat == "running" else None
+        st = stats.get(c.get("Name", ""), {})
+        role = f"LLM sur GPU : {modele_vllm()}" if nom == "vllm" else info["role"]
+        resultat.append({
+            "nom": nom, "role": role, "lien": info["lien"], "etat": etat,
+            "sante": c.get("Health", ""), "pret": pret, "statut": c.get("Status", ""),
+            "ram": st.get("ram", ""), "cpu": st.get("cpu", ""),
+        })
+    return resultat
+
+
+def etat_machine() -> dict:
+    gpu = lancer(["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu,driver_version",
+                  "--format=csv,noheader,nounits"], timeout=10)
+    g = [x.strip() for x in gpu["sortie"].split(",")] if gpu["ok"] else []
+    mem = {}
+    for ligne in Path("/proc/meminfo").read_text().splitlines():
+        k, v = ligne.split(":", 1)
+        mem[k] = int(v.split()[0]) // 1024  # Mo
+    return {
+        "gpu": {"nom": g[0], "utilise": int(g[1]), "total": int(g[2]), "charge": int(g[3]), "driver": g[4]} if len(g) == 5 else None,
+        "ram": {"total": mem["MemTotal"], "dispo": mem["MemAvailable"]},
+    }
+
+
+def etat_nemoclaw() -> dict:
+    if not Path(NEMO).exists():
+        return {"installe": False}
+    r = lancer([NEMO, "list", "--json"], timeout=60, limite=None)
+    try:
+        data = json.loads(r["sortie"][r["sortie"].find("{"):])
+        box = next((s for s in data.get("sandboxes", []) if s.get("name") == SANDBOX), None)
+    except (ValueError, StopIteration):
+        box = None
+    st = lancer(["openshell", "sandbox", "get", SANDBOX], timeout=30, limite=None)
+    phase = next((l for l in st["sortie"].splitlines() if "Phase:" in l), "")
+    pret = "Ready" in phase
+    return {"installe": True, "sandbox": SANDBOX, "info": box, "pret": pret}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _json(self, code: int, obj) -> None:
+        corps = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(corps)))
+        self.end_headers()
+        self.wfile.write(corps)
+
+    def _hote_valide(self) -> bool:
+        # Protège contre le DNS rebinding : seul localhost est accepté
+        return self.headers.get("Host", "").split(":")[0] in {"localhost", "127.0.0.1"}
+
+    def do_GET(self):
+        if not self._hote_valide():
+            return self._json(403, {"erreur": "hôte refusé"})
+        fichiers = {"/": (PAGE, "text/html"), "/index.html": (PAGE, "text/html"),
+                    "/guide": (PAGE_GUIDE, "text/html"), "/guide.md": (GUIDE, "text/markdown")}
+        if self.path in fichiers:
+            chemin, type_ = fichiers[self.path]
+            corps = chemin.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", f"{type_}; charset=utf-8")
+            self.send_header("Content-Length", str(len(corps)))
+            self.end_headers()
+            return self.wfile.write(corps)
+        if self.path == "/api/etat":
+            return self._json(200, {"services": etat_services(), "machine": etat_machine()})
+        if self.path == "/api/nemoclaw":
+            return self._json(200, etat_nemoclaw())
+        if self.path.startswith("/api/logs/"):
+            nom = self.path.rsplit("/", 1)[-1]
+            if nom not in SERVICES:
+                return self._json(404, {"erreur": "service inconnu"})
+            return self._json(200, lancer(["docker", "compose", "logs", "--no-color", "--tail", "120", nom], timeout=30))
+        self._json(404, {"erreur": "introuvable"})
+
+    def do_POST(self):
+        # Requête de la page uniquement : bon hôte + en-tête personnalisé (bloque les formulaires d'autres sites)
+        if not self._hote_valide() or self.headers.get("X-Panneau") != "1":
+            return self._json(403, {"erreur": "requête refusée"})
+        parties = self.path.strip("/").split("/")  # api/<action>/<cible>
+        if len(parties) != 3 or parties[0] != "api":
+            return self._json(404, {"erreur": "introuvable"})
+        _, action, cible = parties
+        if not verrou.acquire(timeout=1):
+            return self._json(409, {"ok": False, "sortie": "Une action est déjà en cours, patiente."})
+        try:
+            if action in ("demarrer", "arreter", "redemarrer") and cible in SERVICES:
+                cmd = {"demarrer": ["up", "-d"], "arreter": ["stop"], "redemarrer": ["restart"]}[action]
+                return self._json(200, lancer(["docker", "compose", *cmd, cible]))
+            if action == "mode" and cible in MODES:
+                garder = MODES[cible]
+                arreter = [s for s in SERVICES if s not in garder]
+                sortie = ""
+                if arreter:
+                    sortie += lancer(["docker", "compose", "stop", *arreter])["sortie"]
+                if garder:
+                    r = lancer(["docker", "compose", "up", "-d", *garder])
+                    sortie += r["sortie"]
+                    return self._json(200, {"ok": r["ok"], "sortie": sortie})
+                return self._json(200, {"ok": True, "sortie": sortie})
+            if action == "nemoclaw" and cible in ("start", "stop"):
+                return self._json(200, lancer([NEMO, SANDBOX, cible], timeout=300))
+            return self._json(400, {"erreur": "action inconnue"})
+        finally:
+            verrou.release()
+
+
+if __name__ == "__main__":
+    print(f"Panneau IA locale : http://localhost:{PORT}  (Ctrl+C pour arrêter)")
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

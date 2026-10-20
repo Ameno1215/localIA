@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panneau IA locale</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef0f4; --text: #16181d; --muted: #5d6573;
+  --border: #dfe3ea; --accent: #2f6fde; --accent-text: #ffffff;
+  --ok: #1f8a4c; --ok-bg: #e3f4ea; --warn: #a96500; --warn-bg: #fdf0dc; --off: #6b7280; --off-bg: #eceef2;
+  --bad: #c0392b; --bad-bg: #fbe5e2; --code-bg: #f0f2f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317; --surface: #1a1d23; --surface-2: #23272f; --text: #e8eaee; --muted: #9aa3b2;
+    --border: #2e333d; --accent: #5b8ff0; --accent-text: #0d1117;
+    --ok: #4cc27f; --ok-bg: #173325; --warn: #e5a54a; --warn-bg: #3a2b14; --off: #8a93a3; --off-bg: #262a32;
+    --bad: #ef6b5d; --bad-bg: #3b1d1a; --code-bg: #20242b;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111317; --surface: #1a1d23; --surface-2: #23272f; --text: #e8eaee; --muted: #9aa3b2;
+  --border: #2e333d; --accent: #5b8ff0; --accent-text: #0d1117;
+  --ok: #4cc27f; --ok-bg: #173325; --warn: #e5a54a; --warn-bg: #3a2b14; --off: #8a93a3; --off-bg: #262a32;
+  --bad: #ef6b5d; --bad-bg: #3b1d1a; --code-bg: #20242b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+h1 { font-size: 24px; margin: 0; }
+h2 { font-size: 17px; margin: 32px 0 12px; }
+h3 { font-size: 15px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 2px 0 0; }
+.jauges { display: flex; gap: 12px; flex-wrap: wrap; }
+.jauge { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; min-width: 190px; }
+.jauge .lbl { font-size: 12px; color: var(--muted); }
+.jauge .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.barre { height: 6px; background: var(--surface-2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.barre > i { display: block; height: 100%; background: var(--accent); }
+.modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.mode { text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; cursor: pointer; color: var(--text); font: inherit; }
+.mode:hover { border-color: var(--accent); }
+.mode b { display: block; }
+.mode span { color: var(--muted); font-size: 13px; }
+.grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.carte { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.ligne { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.role { color: var(--muted); font-size: 13px; }
+.meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.badge { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
+.b-ok { color: var(--ok); background: var(--ok-bg); }
+.b-warn { color: var(--warn); background: var(--warn-bg); }
+.b-off { color: var(--off); background: var(--off-bg); }
+.b-bad { color: var(--bad); background: var(--bad-bg); }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+button.btn, a.btn { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer; text-decoration: none; }
+button.btn:hover, a.btn:hover { border-color: var(--accent); }
+button.prim { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: wait; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 14px; }
+th { background: var(--surface-2); font-size: 13px; }
+tr:last-child td { border-bottom: 0; }
+.tablewrap { overflow-x: auto; }
+details { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; }
+summary { cursor: pointer; padding: 12px 16px; font-weight: 600; }
+details > div { padding: 0 16px 14px; }
+details p { margin: 6px 0; }
+.cmd { position: relative; margin: 6px 0; }
+.cmd pre { margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 70px 10px 12px; overflow-x: auto; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cmd button { position: absolute; top: 6px; right: 6px; font-size: 12px; padding: 3px 8px; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.note { border-left: 3px solid var(--warn); background: var(--warn-bg); padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 14px; }
+#journal { position: fixed; inset: auto 16px 16px 16px; max-width: 1088px; margin: 0 auto; max-height: 45vh; display: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.25); flex-direction: column; }
+#journal.ouvert { display: flex; }
+#journal pre { margin: 0; padding: 12px; overflow: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; flex: 1; }
+#journal .ligne { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.theme { align-self: center; background: none; border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Panneau IA locale</h1>
+      <p class="sub">Banc de test avant le DGX Spark : LLM, RAG, agent de code. Tout tourne sur ce PC, sans internet.</p>
+    </div>
+    <div class="jauges">
+      <div class="jauge"><div class="lbl" id="gpu-nom">GPU</div><div class="val" id="gpu-val">…</div><div class="barre"><i id="gpu-barre" style="width:0"></i></div></div>
+      <div class="jauge"><div class="lbl">RAM disponible</div><div class="val" id="ram-val">…</div><div class="barre"><i id="ram-barre" style="width:0"></i></div></div>
+      <a class="theme" href="/guide" target="_blank" rel="noopener" style="text-decoration:none">Guide complet ↗</a>
+      <button class="theme" id="theme" title="Changer de thème">Thème</button>
+    </div>
+  </header>
+
+  <h2>Modes rapides</h2>
+  <div class="modes">
+    <button class="mode" data-mode="tout"><b>Tout démarrer</b><span>Chat, RAG, agents</span></button>
+    <button class="mode" data-mode="chat"><b>Mode chat</b><span>LLM + Open WebUI seulement</span></button>
+    <button class="mode" data-mode="agent"><b>Mode agent de code</b><span>LLM + RAG + outils (NAT, NemoClaw)</span></button>
+    <button class="mode" data-mode="finetune"><b>Mode fine-tuning</b><span>Libère le GPU (vLLM arrêté)</span></button>
+    <button class="mode" data-mode="rien"><b>Tout arrêter</b><span>Libère GPU et RAM, rien n'est perdu</span></button>
+  </div>
+
+  <h2>Services Docker</h2>
+  <div class="grille" id="services"></div>
+
+  <h2>NemoClaw : agent de code NVIDIA en sandbox</h2>
+  <div class="carte" id="nemoclaw"><span class="meta">Chargement…</span></div>
+
+  <h2>Ce qui fonctionne</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Brique</th><th>État</th><th>Remarque</th></tr></thead>
+    <tbody>
+      <tr><td>Modèle <code>qwen-local</code> : Qwen3.5-4B AWQ</td><td><span class="badge b-ok">Testé</span></td><td>64K de contexte, raisonnement activé, 2 requêtes à la fois.</td></tr>
+      <tr><td>Agent de code OpenCode</td><td><span class="badge b-ok">Testé</span></td><td>Jeu complet et testé en 30 s ; conversation suivie, diffs, commandes sur tes fichiers.</td></tr>
+      <tr><td>Recherche dans les normes (RAG + MCP)</td><td><span class="badge b-ok">Testé</span></td><td>Depuis OpenCode, NAT et Open WebUI. Seule la norme d'exemple est indexée.</td></tr>
+      <tr><td>LiteLLM : clés et quotas par personne</td><td><span class="badge b-ok">Testé</span></td><td>Suivi de consommation sur <code>:4000/ui</code>.</td></tr>
+      <tr><td>Agent NVIDIA NAT</td><td><span class="badge b-ok">Testé</span></td><td>Pour les tâches automatisées. Pour coder, préfère OpenCode.</td></tr>
+      <tr><td>NemoClaw</td><td><span class="badge b-off">Installé, arrêté</span></td><td>Agent isolé en sandbox, réservé aux agents autonomes (Spark).</td></tr>
+      <tr><td>Open WebUI</td><td><span class="badge b-warn">Prêt, à configurer</span></td><td>Créer le compte admin, puis brancher le MCP <code>http://mcp-docs:9901/mcp</code>.</td></tr>
+      <tr><td>Fine-tuning LoRA sur les normes</td><td><span class="badge b-off">Pas encore lancé</span></td><td>Scripts prêts dans <code>finetune/</code>. À faire avec tes vraies normes.</td></tr>
+      <tr><td>Configuration DGX Spark</td><td><span class="badge b-off">Prête, non testée</span></td><td><code>docker-compose.spark.yml</code>, <code>.env.spark.example</code> (section 8 du guide).</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Comment utiliser</h2>
+  <p class="sub" style="margin-bottom:10px">Toutes les commandes se lancent dans un terminal, depuis le dossier <code>~/Documents/IA locale</code>.</p>
+
+  <details open>
+    <summary>Coder avec l'agent OpenCode (recommandé)</summary>
+    <div>
+      <p>1. Lance le <b>mode agent de code</b> ci-dessus et attends que <code>vllm</code> soit « En marche ».</p>
+      <p>2. Dans un terminal, va dans ton projet (de préférence un dépôt git propre), copie les consignes de l'agent une fois, puis lance-le :</p>
+      <div class="cmd"><pre>cd mon-projet
+cp ~/Documents/IA\ locale/clients/AGENTS.md .
+opencode</pre><button class="btn">Copier</button></div>
+      <p>3. Écris ta demande. L'agent montre chaque modification et chaque commande, et attend ton accord. Enchaîne ensuite tes demandes dans la même conversation.</p>
+      <p>Raccourcis : <code>/undo</code> annule la dernière modification, <code>/new</code> démarre une nouvelle conversation, <code>/compact</code> libère du contexte, <code>Tab</code> passe en mode plan (réflexion sans modification).</p>
+      <p>En une seule commande, sans interface (<code>-c</code> poursuit la conversation précédente) :</p>
+      <div class="cmd"><pre>opencode run "Ajoute un test pour la fonction verifier"</pre><button class="btn">Copier</button></div>
+      <div class="note">Avec un petit modèle : une demande précise à la fois, nomme les fichiers, demande de lancer les tests, et vérifie toujours <code>git diff</code>.</div>
+      <p>Installer OpenCode sur un autre poste : <code>./scripts/installer-opencode.sh</code> (voir le guide, section 4).</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Discuter avec le modèle (navigateur)</summary>
+    <div>
+      <p>1. Lance le <b>mode chat</b> ou <b>Tout démarrer</b> ci-dessus. vLLM met environ 2 minutes à être prêt.</p>
+      <p>2. Ouvre <a href="http://localhost:3000" target="_blank" rel="noopener">http://localhost:3000</a>. Le premier compte créé devient administrateur.</p>
+      <p>3. Pour que le chat puisse chercher dans les normes : Réglages admin → Outils externes → ajouter le serveur MCP <code>http://mcp-docs:9901/mcp</code>.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Ajouter tes normes et documents internes (RAG)</summary>
+    <div>
+      <p>Dépose tes PDF, DOCX, MD ou TXT dans <code>docs-internes/</code>, puis lance l'indexation (le mode agent doit tourner). Seuls les fichiers modifiés sont réindexés.</p>
+      <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py</pre><button class="btn">Copier</button></div>
+      <p>Pour tout réindexer :</p>
+      <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py --reset</pre><button class="btn">Copier</button></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Agent NVIDIA NAT (tâches automatisées)</summary>
+    <div>
+      <p>Il travaille sur le dossier <code>workspace/</code> du serveur, cherche dans les normes, modifie les fichiers et lance les tests. Ta clé est lue dans <code>~/.config/ia-locale/env</code>.</p>
+      <div class="cmd"><pre>. ~/.config/ia-locale/env
+NAT_API_KEY=$LITELLM_API_KEY .venv/bin/nat run --config_file agent/config.yml --input "Corrige clients.py selon nos normes puis lance les tests"</pre><button class="btn">Copier</button></div>
+      <p>Pour suivre les outils que l'agent appelle vraiment :</p>
+      <div class="cmd"><pre>docker compose logs -f mcp-docs</pre><button class="btn">Copier</button></div>
+      <div class="note">Vérifie toujours le fichier réel et les tests. Un agent peut annoncer une modification qu'il n'a pas faite.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Agent NemoClaw (Deep Agents Code)</summary>
+    <div>
+      <p>Démarre le sandbox avec le bouton ci-dessus (le mode agent doit tourner), puis ouvre l'agent dans un terminal :</p>
+      <div class="cmd"><pre>nemo-deepagents launch patate</pre><button class="btn">Copier</button></div>
+      <p>Envoyer un projet dans le sandbox, puis récupérer le résultat :</p>
+      <div class="cmd"><pre>nemo-deepagents patate upload workspace /sandbox/projet
+nemo-deepagents patate download /sandbox/projet ./resultat</pre><button class="btn">Copier</button></div>
+      <p>Lancer une tâche sans interaction (les écritures sont approuvées automatiquement) :</p>
+      <div class="cmd"><pre>nemo-deepagents patate exec --workdir /sandbox -- dcode -n "Lis normes/ puis corrige projet/clients.py"</pre><button class="btn">Copier</button></div>
+      <div class="note">Lance <code>dcode</code> depuis <code>/sandbox</code> avec des chemins relatifs (<code>projet/…</code>, <code>normes/…</code>). Si la commande est introuvable, recharge le terminal : <code>source ~/.bashrc</code>.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Créer un accès pour un collègue</summary>
+    <div>
+      <p>Chaque personne a sa clé (2 requêtes en parallèle, 60 par minute). Elle sert dans Open WebUI, NAT et OpenCode.</p>
+      <div class="cmd"><pre>./scripts/creer-cle-utilisateur.sh prenom.nom</pre><button class="btn">Copier</button></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Entraîner le modèle sur les normes (LoRA)</summary>
+    <div>
+      <p>1. Génère le jeu de questions/réponses à partir des docs indexés. Relis-en un échantillon ensuite.</p>
+      <div class="cmd"><pre>source .env && docker compose exec -e LITELLM_KEY=$LITELLM_MASTER_KEY mcp-docs python /finetune/generer_dataset.py</pre><button class="btn">Copier</button></div>
+      <p>2. Passe en <b>mode fine-tuning</b> (libère le GPU), puis lance l'entraînement :</p>
+      <div class="cmd"><pre>python3 -m venv .venv-finetune && .venv-finetune/bin/pip install -r finetune/requirements.txt
+.venv-finetune/bin/python finetune/entrainer_lora.py</pre><button class="btn">Copier</button></div>
+      <p>3. Dans <code>.env</code>, décommente <code>VLLM_LORA_ARGS</code>, puis redémarre vLLM. Le modèle <code>normes</code> devient disponible.</p>
+      <div class="note">Le fine-tuning apprend le style et le vocabulaire, pas les règles exactes. La source de vérité reste le RAG.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Lancer ce panneau</summary>
+    <div>
+      <div class="cmd"><pre>./scripts/panneau.sh</pre><button class="btn">Copier</button></div>
+      <p>Puis ouvre <code>http://localhost:7000</code>. Ctrl+C dans le terminal pour l'arrêter. Le panneau n'est accessible que depuis ce PC.</p>
+    </div>
+  </details>
+</main>
+
+<div id="journal">
+  <div class="ligne"><b id="journal-titre">Journal</b><button class="btn" id="journal-fermer">Fermer</button></div>
+  <pre id="journal-texte"></pre>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const enCours = new Set();
+
+// Thème : préférence locale facultative
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+$("#theme").onclick = () => {
+  const sombre = matchMedia("(prefers-color-scheme: dark)").matches;
+  const actuel = document.documentElement.dataset.theme || (sombre ? "dark" : "light");
+  const suivant = actuel === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = suivant;
+  try { localStorage.setItem("theme", suivant); } catch (e) {}
+};
+
+function journal(titre, texte) {
+  $("#journal-titre").textContent = titre;
+  $("#journal-texte").textContent = texte || "(aucune sortie)";
+  $("#journal").classList.add("ouvert");
+  const pre = $("#journal-texte"); pre.scrollTop = pre.scrollHeight;
+}
+$("#journal-fermer").onclick = () => $("#journal").classList.remove("ouvert");
+
+async function action(url, titre, bouton) {
+  if (bouton) bouton.disabled = true;
+  journal(titre, "En cours…");
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "X-Panneau": "1" } });
+    const d = await r.json();
+    journal(titre + (d.ok === false ? " : échec" : " : terminé"), d.sortie || d.erreur);
+  } catch (e) { journal(titre + " : erreur", String(e)); }
+  if (bouton) bouton.disabled = false;
+  rafraichir();
+  chargerNemo();
+}
+
+function badge(s) {
+  if (s.etat !== "running") return s.etat === "absent" ? ["Jamais créé", "b-off"] : ["Arrêté", "b-off"];
+  if (s.sante === "starting" || s.pret === false) return ["Démarrage…", "b-warn"];
+  if (s.sante === "unhealthy") return ["En erreur", "b-bad"];
+  return ["En marche", "b-ok"];
+}
+
+function carteService(s) {
+  const [txt, cls] = badge(s);
+  const div = document.createElement("div");
+  div.className = "carte";
+  const enMarche = s.etat === "running";
+  div.innerHTML = `
+    <div class="ligne"><div><h3>${s.nom}</h3><div class="role">${s.role}</div></div><span class="badge ${cls}">${txt}</span></div>
+    <div class="meta">${enMarche ? `RAM ${s.ram || "?"} · CPU ${s.cpu || "?"} · ${s.statut}` : "&nbsp;"}</div>
+    <div class="actions"></div>`;
+  const acts = div.querySelector(".actions");
+  const btn = (label, cls2, fn) => { const b = document.createElement("button"); b.className = "btn " + cls2; b.textContent = label; b.onclick = () => fn(b); acts.appendChild(b); };
+  if (enMarche) {
+    btn("Arrêter", "", (b) => action(`/api/arreter/${s.nom}`, `Arrêt de ${s.nom}`, b));
+    btn("Redémarrer", "", (b) => action(`/api/redemarrer/${s.nom}`, `Redémarrage de ${s.nom}`, b));
+  } else {
+    btn("Démarrer", "prim", (b) => action(`/api/demarrer/${s.nom}`, `Démarrage de ${s.nom}`, b));
+  }
+  btn("Logs", "", async () => {
+    journal(`Logs de ${s.nom}`, "Chargement…");
+    const d = await (await fetch(`/api/logs/${s.nom}`)).json();
+    journal(`Logs de ${s.nom} (120 dernières lignes)`, d.sortie);
+  });
+  if (s.lien && enMarche) { const a = document.createElement("a"); a.className = "btn"; a.href = s.lien; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Ouvrir ↗"; acts.appendChild(a); }
+  return div;
+}
+
+async function rafraichir() {
+  try {
+    const d = await (await fetch("/api/etat")).json();
+    const box = $("#services"); box.replaceChildren(...d.services.map(carteService));
+    const g = d.machine.gpu;
+    if (g) {
+      $("#gpu-nom").textContent = `${g.nom.replace("NVIDIA GeForce ", "")} · driver ${g.driver}`;
+      $("#gpu-val").textContent = `${(g.utilise / 1024).toFixed(1)} / ${(g.total / 1024).toFixed(1)} Go VRAM · ${g.charge} %`;
+      $("#gpu-barre").style.width = `${Math.round(100 * g.utilise / g.total)}%`;
+    }
+    const m = d.machine.ram;
+    $("#ram-val").textContent = `${(m.dispo / 1024).toFixed(1)} Go libres sur ${(m.total / 1024).toFixed(0)}`;
+    $("#ram-barre").style.width = `${Math.round(100 * (1 - m.dispo / m.total))}%`;
+  } catch (e) { $("#services").textContent = "Impossible de joindre le serveur du panneau."; }
+}
+
+async function chargerNemo() {
+  const c = $("#nemoclaw");
+  try {
+    const d = await (await fetch("/api/nemoclaw")).json();
+    if (!d.installe) { c.innerHTML = `<span class="badge b-off">Non installé</span>`; return; }
+    const i = d.info || {};
+    c.innerHTML = `
+      <div class="ligne"><div><h3>Sandbox « ${d.sandbox} »</h3>
+        <div class="role">Agent ${i.agent || "langchain-deepagents-code"} · modèle ${i.model || "?"} via ${i.provider || "?"}</div></div>
+        <span class="badge ${d.pret ? "b-ok" : "b-off"}">${d.pret ? "Prêt" : "Arrêté"}</span></div>
+      <div class="meta">Le modèle doit tourner (vLLM) pour que l'agent réponde. Ouvrir l'agent : <code>nemo-deepagents launch ${d.sandbox}</code></div>
+      <div class="actions"></div>`;
+    const acts = c.querySelector(".actions");
+    const b = document.createElement("button");
+    b.className = "btn " + (d.pret ? "" : "prim");
+    b.textContent = d.pret ? "Arrêter le sandbox" : "Démarrer le sandbox";
+    b.onclick = () => action(`/api/nemoclaw/${d.pret ? "stop" : "start"}`, d.pret ? "Arrêt du sandbox" : "Démarrage du sandbox", b);
+    acts.appendChild(b);
+  } catch (e) { c.textContent = "État NemoClaw indisponible."; }
+}
+
+document.querySelectorAll(".mode").forEach((b) => {
+  b.onclick = () => action(`/api/mode/${b.dataset.mode}`, `Mode : ${b.querySelector("b").textContent}`, b);
+});
+document.querySelectorAll(".cmd button").forEach((b) => {
+  b.onclick = async () => {
+    const t = b.previousElementSibling.textContent;
+    try { await navigator.clipboard.writeText(t); b.textContent = "Copié"; } catch (e) { b.textContent = "Échec"; }
+    setTimeout(() => (b.textContent = "Copier"), 1500);
+  };
+});
+
+rafraichir(); chargerNemo();
+setInterval(rafraichir, 10000);
+</script>
+</body>
+</html>

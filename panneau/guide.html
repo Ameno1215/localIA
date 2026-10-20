@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide IA locale</title>
+<style>
+:root { --bg:#f6f7f9; --surface:#fff; --surface-2:#eef0f4; --text:#16181d; --muted:#5d6573; --border:#dfe3ea; --accent:#2f6fde; --code-bg:#f0f2f6; --note:#a96500; --note-bg:#fdf0dc; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#111317; --surface:#1a1d23; --surface-2:#23272f; --text:#e8eaee; --muted:#9aa3b2; --border:#2e333d; --accent:#5b8ff0; --code-bg:#20242b; --note:#e5a54a; --note-bg:#3a2b14; } }
+:root[data-theme="dark"] { --bg:#111317; --surface:#1a1d23; --surface-2:#23272f; --text:#e8eaee; --muted:#9aa3b2; --border:#2e333d; --accent:#5b8ff0; --code-bg:#20242b; --note:#e5a54a; --note-bg:#3a2b14; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+.cadre { display:grid; grid-template-columns: 260px minmax(0,1fr); gap:32px; max-width:1180px; margin:0 auto; padding:24px 16px 80px; }
+nav { position:sticky; top:16px; align-self:start; max-height:calc(100vh - 32px); overflow:auto; font-size:14px; }
+nav a { display:block; color:var(--muted); text-decoration:none; padding:3px 8px; border-radius:6px; }
+nav a:hover { color:var(--text); background:var(--surface-2); }
+nav .n3 { padding-left:20px; font-size:13px; }
+nav .retour { color:var(--accent); margin-bottom:10px; }
+article { min-width:0; }
+h1 { font-size:30px; margin:0 0 12px; }
+h2 { font-size:22px; margin:40px 0 12px; padding-top:12px; border-top:1px solid var(--border); }
+h3 { font-size:17px; margin:26px 0 8px; }
+a { color:var(--accent); }
+code { background:var(--code-bg); padding:1px 5px; border-radius:4px; font:14px ui-monospace,SFMono-Regular,Menlo,monospace; }
+pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; overflow-x:auto; }
+pre code { background:none; padding:0; font-size:13px; line-height:1.45; }
+.tablewrap { overflow-x:auto; margin:12px 0; }
+table { border-collapse:collapse; width:100%; background:var(--surface); font-size:14px; }
+th, td { border:1px solid var(--border); padding:7px 10px; text-align:left; vertical-align:top; }
+th { background:var(--surface-2); }
+blockquote { margin:12px 0; padding:8px 14px; border-left:3px solid var(--note); background:var(--note-bg); border-radius:6px; }
+blockquote p { margin:4px 0; }
+hr { border:0; border-top:1px solid var(--border); margin:28px 0; }
+ul, ol { padding-left:24px; }
+@media (max-width: 820px) { .cadre { grid-template-columns: 1fr; } nav { position:static; max-height:none; } }
+</style>
+</head>
+<body>
+<div class="cadre">
+  <nav id="sommaire"><a class="retour" href="/">← Panneau</a></nav>
+  <article id="contenu">Chargement du guide…</article>
+</div>
+<script>
+// Thème choisi dans le panneau
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const slug = (s) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+function enLigne(t) {
+  const codes = [];
+  t = t.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  t = esc(t)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, url) => `<a href="${url === "GUIDE.md" ? "#" : url}">${txt}</a>`)
+    .replace(/(^|[\s(])(https?:\/\/[^\s)<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
+}
+
+function rendre(md) {
+  const lignes = md.split("\n"), html = [], titres = [];
+  let i = 0;
+  while (i < lignes.length) {
+    const l = lignes[i];
+    if (l.startsWith("```")) {
+      const bloc = []; i++;
+      while (i < lignes.length && !lignes[i].startsWith("```")) bloc.push(lignes[i++]);
+      html.push(`<pre><code>${esc(bloc.join("\n"))}</code></pre>`); i++; continue;
+    }
+    const h = l.match(/^(#{1,3}) (.*)/);
+    if (h) {
+      const n = h[1].length, id = slug(h[2]);
+      if (n > 1) titres.push({ n, id, texte: h[2] });
+      html.push(`<h${n} id="${id}">${enLigne(h[2])}</h${n}>`); i++; continue;
+    }
+    if (/^---+$/.test(l.trim())) { html.push("<hr>"); i++; continue; }
+    if (l.startsWith("|")) {
+      const rangs = [];
+      while (i < lignes.length && lignes[i].startsWith("|")) rangs.push(lignes[i++]);
+      const cellules = (r) => r.replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((c) => enLigne(c.trim()));
+      const tete = cellules(rangs[0]), corps = rangs.slice(2).map(cellules);
+      html.push(`<div class="tablewrap"><table><thead><tr>${tete.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${corps.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    if (l.startsWith(">")) {
+      const bloc = [];
+      while (i < lignes.length && lignes[i].startsWith(">")) bloc.push(lignes[i++].replace(/^>\s?/, ""));
+      html.push(`<blockquote>${bloc.filter(Boolean).map((p) => `<p>${enLigne(p)}</p>`).join("")}</blockquote>`); continue;
+    }
+    const liste = l.match(/^(\s*)([-*]|\d+\.) (.*)/);
+    if (liste) {
+      const ordonnee = /\d/.test(liste[2]), items = [];
+      while (i < lignes.length) {
+        const m = lignes[i].match(/^(\s*)([-*]|\d+\.) (.*)/);
+        if (m) { items.push({ texte: m[3], niv: m[1].length, sous: [] }); i++; continue; }
+        // Bloc de code ou suite indentée rattachés au dernier élément
+        if (/^\s{2,}\S/.test(lignes[i]) && items.length) {
+          if (lignes[i].trim().startsWith("```")) {
+            const bloc = []; i++;
+            while (i < lignes.length && !lignes[i].trim().startsWith("```")) bloc.push(lignes[i++].replace(/^\s{3}/, ""));
+            i++; items[items.length - 1].sous.push(`<pre><code>${esc(bloc.join("\n"))}</code></pre>`);
+          } else { items[items.length - 1].texte += " " + lignes[i].trim(); i++; }
+          continue;
+        }
+        break;
+      }
+      const tag = ordonnee ? "ol" : "ul";
+      html.push(`<${tag}>${items.map((it) => `<li${it.niv ? ' style="margin-left:18px"' : ""}>${enLigne(it.texte)}${it.sous.join("")}</li>`).join("")}</${tag}>`);
+      continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const para = [];
+    while (i < lignes.length && lignes[i].trim() && !/^(#|```|\||>|\s*([-*]|\d+\.) )/.test(lignes[i]) && !/^---+$/.test(lignes[i].trim())) para.push(lignes[i++]);
+    html.push(`<p>${enLigne(para.join(" "))}</p>`);
+  }
+  return { html: html.join("\n"), titres };
+}
+
+fetch("/guide.md").then((r) => r.text()).then((md) => {
+  const { html, titres } = rendre(md);
+  document.getElementById("contenu").innerHTML = html;
+  const nav = document.getElementById("sommaire");
+  for (const t of titres) {
+    const a = document.createElement("a");
+    a.href = "#" + t.id; a.textContent = t.texte.replace(/[`*]/g, ""); if (t.n === 3) a.className = "n3";
+    nav.appendChild(a);
+  }
+}).catch(() => { document.getElementById("contenu").textContent = "Impossible de charger GUIDE.md."; });
+</script>
+</body>
+</html>

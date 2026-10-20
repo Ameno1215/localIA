@@ -1,0 +1,146 @@
+# Stack IA locale — identique (à la taille du modèle près) à ce qui tournera sur le DGX Spark.
+#
+#   Open WebUI (3000) ─┐
+#   OpenCode / IDE ────┼─> LiteLLM (4000) ─> vLLM (8000, GPU)       <- LLM + LoRA "normes"
+#   Agent NVIDIA NAT ──┘        │
+#        │                      └─> TEI embeddings (CPU)
+#        └──> MCP docs-internes (9901) ─> Qdrant (6333) + TEI embed/rerank (CPU)
+#
+# Sur le Spark (arm64) : mêmes services, images aarch64, modèle plus gros.
+
+x-offline: &offline
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+
+# TEI sur CPU : sans ces réglages, chaque instance garde 10-15 Go de RAM (arènes malloc + gros lots)
+x-tei: &tei
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+  environment:
+    <<: *offline
+    MALLOC_ARENA_MAX: "2"
+    OMP_NUM_THREADS: "4"
+  volumes: ["./models:/models:ro"]
+  restart: unless-stopped
+
+services:
+  vllm:
+    # CUDA 13 (driver >= 580). Le tag -cu129 de la v0.30.0 mélange torch cu130 et torchvision cu129.
+    image: vllm/vllm-openai:v0.30.0
+    entrypoint: ["vllm", "serve"]
+    command: >
+      /models/${VLLM_MODEL}
+      --served-model-name qwen-local
+      --host 0.0.0.0 --port 8000
+      --max-model-len ${VLLM_MAX_MODEL_LEN}
+      --gpu-memory-utilization ${VLLM_GPU_UTIL}
+      --max-num-seqs ${VLLM_MAX_SEQS}
+      --kv-cache-dtype fp8
+      --enable-prefix-caching
+      --enable-auto-tool-choice --tool-call-parser ${VLLM_TOOL_PARSER:-hermes}
+      ${VLLM_EXTRA_ARGS:-}
+      ${VLLM_LORA_ARGS}
+    environment: *offline
+    volumes:
+      - ./models:/models:ro
+      - ./loras:/loras:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+      # Pont réseau OpenShell (NemoClaw) : la passerelle joint vLLM via host.openshell.internal.
+      # Visible seulement de la machine et du sandbox. 127.0.0.2 (inutilisé) si NemoClaw absent.
+      - "${OPENSHELL_BRIDGE_IP:-127.0.0.2}:8000:8000"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 15s
+      retries: 40
+    restart: unless-stopped
+
+  # Embeddings + reranker sur CPU : la VRAM reste pour le LLM
+  tei-embed:
+    <<: *tei
+    command: --model-id /models/bge-m3 --port 80 --max-batch-tokens 4096 --max-client-batch-size 16 --max-concurrent-requests 32 --tokenization-workers 2
+
+  tei-rerank:
+    <<: *tei
+    command: --model-id /models/bge-reranker-v2-m3 --port 80 --max-batch-tokens 4096 --max-client-batch-size 32 --max-concurrent-requests 64 --tokenization-workers 2
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    volumes: ["qdrant:/qdrant/storage"]
+    ports: ["127.0.0.1:6333:6333"]
+    restart: unless-stopped
+
+  # Serveur MCP maison : recherche dans les normes/docs + outils fichiers sur ./workspace
+  # Utilisé par l'agent NVIDIA (NAT), OpenCode et Open WebUI.
+  mcp-docs:
+    build: ./services/mcp-docs
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      EMBED_URL: http://tei-embed
+      RERANK_URL: http://tei-rerank
+      COLLECTION: docs_internes
+      WORKSPACE: /workspace
+      OUTILS_CODE: ${MCP_OUTILS_CODE:-1}
+    volumes:
+      - ./docs-internes:/docs:ro
+      - ./workspace:/workspace
+      - ./finetune:/finetune:ro
+      - ./data:/data
+    ports: ["127.0.0.1:9901:9901"]
+    depends_on: [qdrant, tei-embed, tei-rerank]
+    restart: unless-stopped
+
+  # Passerelle multi-utilisateurs : une clé API par personne, quotas, logs, routage
+  litellm:
+    image: litellm/litellm:v1.98.1
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      STORE_MODEL_IN_DB: "False"
+    volumes: ["./config/litellm.yaml:/app/config.yaml:ro"]
+    ports: ["127.0.0.1:4000:4000"]
+    depends_on: [postgres]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: litellm
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+  # Interface web : comptes utilisateurs, historique, RAG sur documents déposés
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    environment:
+      <<: *offline
+      OFFLINE_MODE: "true"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      # RAG intégré d'Open WebUI : mêmes embeddings et même Qdrant que le reste
+      VECTOR_DB: qdrant
+      QDRANT_URI: http://qdrant:6333
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_EMBEDDING_MODEL: bge-m3
+      RAG_OPENAI_API_BASE_URL: http://litellm:4000/v1
+      RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      # Outil de recherche dans les normes (MCP), déclaré d'office
+      TOOL_SERVER_CONNECTIONS: '[{"type":"mcp","url":"http://mcp-docs:9901/mcp","auth_type":"none","key":"","config":{"enable":true},"info":{"id":"docs-internes","name":"docs-internes","description":"Recherche dans les normes internes (ISO 7816, ISO 14443, GlobalPlatform)"}}]'
+    volumes: ["open-webui:/app/backend/data"]
+    ports: ["0.0.0.0:3000:8080"]
+    depends_on: [litellm, qdrant]
+    restart: unless-stopped
+
+volumes:
+  qdrant:
+  postgres:
+  open-webui:

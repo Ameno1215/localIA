@@ -1,0 +1,41 @@
+# Tous les clients ne connaissent que http://<machine>:4000/v1 et un nom de modèle.
+# Sur le Spark, on change seulement api_base / on ajoute des réplicas : rien ne casse côté clients.
+model_list:
+  # LLM généraliste (chat + agentique + code)
+  - model_name: qwen-local
+    litellm_params:
+      model: hosted_vllm/qwen-local
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+  # Même modèle + adaptateur LoRA entraîné sur les normes internes (voir finetune/)
+  - model_name: normes
+    litellm_params:
+      model: hosted_vllm/normes
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+  # Embeddings (pour Open WebUI et tes scripts)
+  - model_name: bge-m3
+    litellm_params:
+      model: openai/bge-m3
+      api_base: http://tei-embed/v1
+      api_key: none
+    model_info:
+      mode: embedding
+
+  # Plus tard sur 2 Spark : deux entrées avec le même model_name = répartition de charge
+  # - model_name: qwen-local
+  #   litellm_params: { model: hosted_vllm/qwen-local, api_base: http://spark2:8000/v1, api_key: none }
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+
+router_settings:
+  routing_strategy: least-busy
+  num_retries: 1
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

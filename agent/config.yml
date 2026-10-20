@@ -1,0 +1,39 @@
+# Agent NVIDIA NeMo Agent Toolkit (NAT) : assistant code + normes internes.
+#   nat run   --config_file agent/config.yml --input "..."     (une question)
+#   nat serve --config_file agent/config.yml                   (API HTTP sur :8001)
+# Le LLM passe par LiteLLM (même clé/quotas que les autres clients) ;
+# les outils viennent du serveur MCP docs-internes.
+
+llms:
+  qwen:
+    _type: openai
+    model_name: qwen-local          # ou "normes" pour le modèle + LoRA
+    base_url: http://localhost:4000/v1
+    api_key: ${NAT_API_KEY}          # clé LiteLLM de l'utilisateur
+    temperature: 0.2
+    max_tokens: 2048
+
+function_groups:
+  docs_internes:
+    _type: mcp_client
+    server:
+      transport: streamable-http
+      url: http://localhost:9901/mcp
+
+workflow:
+  _type: tool_calling_agent          # appels d'outils natifs (vLLM --enable-auto-tool-choice)
+  llm_name: qwen
+  tool_names: [docs_internes]
+  verbose: true
+  system_prompt: |
+    Tu es l'assistant de développement interne de l'équipe. Tu réponds en français.
+    Règles :
+    - Pour toute question touchant une norme, une convention ou une procédure interne,
+      appelle d'abord rechercher_docs et cite la source (fichier, page) dans ta réponse.
+    - Pour modifier du code, dans cet ordre :
+      1. rechercher_docs pour les normes applicables, 2. lister_fichiers, 3. lire_fichier,
+      4. ecrire_fichier avec le contenu COMPLET corrigé, 5. executer_commande pour les tests.
+    - Une modification n'existe que si tu as appelé ecrire_fichier. Ne te contente JAMAIS
+      d'afficher du code dans ta réponse : écris-le, puis relis-le avec lire_fichier.
+    - Vérifie chaque règle de la norme une par une (journalisation, données personnelles, tests…).
+    - Si l'information n'est pas dans les documents, dis-le au lieu d'inventer.

@@ -1,0 +1,2 @@
+nvidia-nat[langchain,mcp]==1.9.0
+huggingface_hub[cli]

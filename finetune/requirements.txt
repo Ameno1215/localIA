@@ -1,0 +1,3 @@
+# Venv séparé (torch est lourd) :
+#   python3 -m venv .venv-finetune && .venv-finetune/bin/pip install -r finetune/requirements.txt
+unsloth==2026.9.12
