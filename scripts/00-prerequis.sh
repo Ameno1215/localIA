@@ -4,25 +4,33 @@
 #   2. NVIDIA Container Toolkit (accès GPU depuis Docker)
 #   3. plugin "docker compose"
 # Un redémarrage est nécessaire après la mise à jour du driver.
+# Sur le DGX Spark (arm64), DGX OS fournit déjà driver, Docker et toolkit : on n'y touche pas.
 set -euo pipefail
 
-echo "==> Driver NVIDIA 595"
 sudo apt-get update
-sudo apt-get install -y nvidia-driver-595
+if [ "$(uname -m)" = "aarch64" ]; then
+  echo "==> DGX Spark : driver et NVIDIA Container Toolkit fournis par DGX OS (non modifiés)"
+  nvidia-smi
+else
+  echo "==> Driver NVIDIA 595"
+  sudo apt-get install -y nvidia-driver-595
 
-echo "==> NVIDIA Container Toolkit"
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-  | sudo gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
+  echo "==> NVIDIA Container Toolkit"
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+    | sudo gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+  sudo apt-get update
+  sudo apt-get install -y nvidia-container-toolkit
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+fi
 
 echo "==> docker compose + Python venv/pip"
-sudo apt-get install -y docker-compose-v2 python3.12-venv python3-pip
+# docker-compose-v2 (Ubuntu) entre en conflit avec le plugin de Docker CE : seulement s'il manque
+docker compose version >/dev/null 2>&1 || sudo apt-get install -y docker-compose-v2
+sudo apt-get install -y python3.12-venv python3-pip
 
 echo "==> Outils Python côté hôte (.venv) : hf CLI + NeMo Agent Toolkit"
 cd "$(dirname "$0")/.."

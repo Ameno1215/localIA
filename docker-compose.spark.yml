@@ -6,12 +6,15 @@
 #
 # Différences avec le PC :
 #  - modèle plus gros (voir .env.spark.example), mêmes noms côté clients (qwen-local, bge-m3)
+#  - vLLM réglé d'après la recette vérifiée GB10 de recipes.vllm.ai (Qwen3.6-35B-A3B, variante NVFP4)
 #  - TEI n'existe pas en ARM64 : embeddings et reranker servis par vLLM (mode pooling), sur GPU
 #  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur /, normes (MCP) sur /mcp avec jeton
 #  - le serveur MCP n'expose que rechercher_docs (OUTILS_CODE=0) : les agents travaillent sur les postes
+#
+# Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
 
 x-vllm-pooling: &vllm-pooling
-  image: vllm/vllm-openai:v0.30.0
+  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
   entrypoint: ["vllm", "serve"]
   environment:
     HF_HUB_OFFLINE: "1"
@@ -24,7 +27,28 @@ x-vllm-pooling: &vllm-pooling
   restart: unless-stopped
 
 services:
+  # Recette GB10 : FlashInfer pour l'attention, Marlin pour les experts NVFP4, MTP (3 tokens devinés
+  # d'avance) pour accélérer la génération. Mesuré par vLLM : ~98 tok/s en génération, 1 requête.
   vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+    command: >
+      /models/${VLLM_MODEL}
+      --served-model-name qwen-local
+      --host 0.0.0.0 --port 8000
+      --max-model-len ${VLLM_MAX_MODEL_LEN}
+      --gpu-memory-utilization ${VLLM_GPU_UTIL}
+      --max-num-seqs ${VLLM_MAX_SEQS}
+      --max-num-batched-tokens 8192
+      --kv-cache-dtype fp8
+      --attention-backend flashinfer
+      --moe-backend marlin
+      --enable-chunked-prefill --async-scheduling --enable-prefix-caching
+      --enable-auto-tool-choice --tool-call-parser ${VLLM_TOOL_PARSER:-qwen3_coder}
+      ${VLLM_SPEC_ARGS:-}
+      ${VLLM_EXTRA_ARGS:-}
+      ${VLLM_LORA_ARGS:-}
+    environment:
+      VLLM_USE_RUST_FRONTEND: "1"
     ports: !override
       - "127.0.0.1:8000:8000"
 

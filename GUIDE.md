@@ -351,20 +351,27 @@ Ce n'est **pas encore fait**, et c'est à faire une fois tes vraies normes index
    ```bash
    cp .env.spark.example .env
    ```
-   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`. ⚠ Vérifie le parser d'outils recommandé pour Qwen3.6 sur recipes.vllm.ai.
+   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`.
 4. **Démarre la stack :**
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d
    ```
-5. **Vérifie** que vLLM charge le modèle de 35B : il démarre en plusieurs minutes, et la commande `docker compose logs -f vllm` montre sa progression.
-6. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes :
+5. **Attends que vLLM ait chargé le modèle de 35B.** Ça prend plusieurs minutes, et la commande `docker compose logs -f vllm` montre la progression.
+6. **Vérifie que tout répond** : chat, appels d'outils, débit, embeddings et reranker.
+   ```bash
+   ./scripts/02-verifier-spark.sh
+   ```
+   Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s), car vLLM mesure ~98 tok/s sur GB10. Si une ligne échoue, voir la section 9.
+7. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes :
    ```bash
    docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./spark-ca.crt
    ```
 
 Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
 - **Modèle :** `Qwen3.6-35B-A3B` NVFP4 (profil recommandé par NVIDIA), avec 128K de contexte et 8 requêtes en parallèle.
-- **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64. ⚠ À valider.
+- **Réglages vLLM :** ceux de la recette vérifiée pour le DGX Spark sur [recipes.vllm.ai](https://recipes.vllm.ai/Qwen/Qwen3.6-35B-A3B?hardware=dgx_spark_gb10). Attention FlashInfer, experts NVFP4 via Marlin, décodage spéculatif MTP (`VLLM_SPEC_ARGS`), et 50 % de la mémoire unifiée, car le reste est partagé avec le système et les autres services.
+- **Image vLLM :** réglable avec `VLLM_IMAGE` dans `.env`. Par défaut c'est la même que sur le PC (v0.30.0, disponible en arm64).
+- **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64.
 - **Accès réseau :** seul **Caddy** (HTTPS, port 443) est joignable depuis le réseau. LiteLLM est servi sur `/`, la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Tout le reste n'écoute qu'en local.
 - **Serveur MCP :** il n'expose que `rechercher_docs` (`OUTILS_CODE=0`). Les outils fichiers et commandes ne doivent jamais être joignables par le réseau.
 
@@ -385,7 +392,7 @@ C'est la seule différence avec le PC de test : `opencode` s'utilise exactement 
 
 - **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
-- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec le 35B.
+- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec le 35B. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
 
 ---
 
@@ -404,6 +411,8 @@ C'est la seule différence avec le PC de test : `opencode` s'utilise exactement 
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
 | NemoClaw : `doctor` affiche `Inference route … 503` | La passerelle OpenShell ne joint pas vLLM | Vérifier que `OPENSHELL_BRIDGE_IP` (dans `.env`) correspond à `docker network inspect openshell-docker`, puis `docker compose up -d vllm` |
+| Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d vllm` |
+| Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 | NemoClaw : pip bloqué (`403 Forbidden`) | Pare-feu du sandbox | Télécharger les paquets sur le poste, puis les installer hors ligne dans le sandbox (`pip download`, `upload`, `pip install --no-index`) |
 
 ---
@@ -437,6 +446,7 @@ IA locale/
 └── scripts/
     ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
     ├── 01-telecharger-modeles.sh   poids des modèles (--spark pour le Spark)
+    ├── 02-verifier-spark.sh    vérifie que chat, outils, embeddings et reranker répondent
     ├── creer-cle-utilisateur.sh    clé LiteLLM pour une personne
     ├── installer-opencode.sh   OpenCode sur un poste
     └── panneau.sh              lance le panneau web
@@ -466,6 +476,8 @@ IA locale/
 | `VLLM_TOOL_PARSER` | Format des appels d'outils du modèle |
 | `VLLM_EXTRA_ARGS` | Options vLLM propres au modèle |
 | `VLLM_LORA_ARGS` | Active l'adaptateur `normes` (vide tant qu'il n'est pas entraîné) |
+| `VLLM_IMAGE` | Spark uniquement : image Docker de vLLM |
+| `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
 | `MCP_OUTILS_CODE` | 1 : outils fichiers/commandes (agent NAT local). 0 : seulement la recherche dans les normes |
 | `OPENSHELL_BRIDGE_IP` | Adresse du pont NemoClaw (vide si NemoClaw est absent) |
 | `SPARK_HOSTNAME`, `MCP_TOKEN` | Spark uniquement : nom du serveur et jeton d'équipe pour les normes |
