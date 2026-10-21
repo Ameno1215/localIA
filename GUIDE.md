@@ -37,8 +37,6 @@ L'agent de code tourne **sur le poste du développeur** : il lit et modifie tes 
 | **MCP docs-internes** | Serveur d'outils pour les agents. Son outil principal, `rechercher_docs`, cherche dans les normes. | 9901 |
 | **Open WebUI** | Chat dans le navigateur, avec un compte par personne et l'historique des conversations. | 3000 |
 | **OpenCode** | Agent de code dans le terminal, l'équivalent local de Claude Code. **C'est l'outil principal pour coder.** | sur le poste |
-| **Agent NAT** | Agent NVIDIA (NeMo Agent Toolkit) configuré en YAML. Utile pour automatiser une tâche précise. | sur le serveur |
-| **NemoClaw** | Agent NVIDIA isolé dans un sandbox. Réservé aux agents autonomes, voir la section 6. | sur le serveur |
 | **Panneau web** | Démarre et arrête les services, affiche leur état et rappelle les commandes. | 7000 (local) |
 
 ### Le chemin d'une question sur les normes
@@ -108,7 +106,6 @@ Lance-le, puis ouvre http://localhost:7000 :
   - *Tout arrêter*.
 - **Une carte par service :** son état, sa RAM et son CPU, et les boutons Démarrer, Arrêter, Redémarrer, Logs et Ouvrir.
 - **Jauges :** l'occupation du GPU et de la RAM.
-- **NemoClaw :** démarrer ou arrêter le sandbox.
 
 Le panneau n'est accessible que depuis le PC lui-même.
 
@@ -262,69 +259,6 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 2. Crée ton compte. Le premier compte créé devient administrateur.
 3. Pour que le chat puisse chercher dans les normes : Réglages admin → Outils externes → ajoute le serveur MCP `http://mcp-docs:9901/mcp`.
 
-### Agent NVIDIA NAT
-
-C'est un agent défini en YAML dans `agent/config.yml`. Il travaille sur le dossier `workspace/` du serveur, avec les outils du serveur MCP. Il est utile pour une tâche automatisée et répétable. Pour coder sur ton propre projet, préfère OpenCode.
-
-```bash
-. ~/.config/ia-locale/env
-NAT_API_KEY=$LITELLM_API_KEY .venv/bin/nat run --config_file agent/config.yml --input "Que dit la norme sur les tests ?"
-```
-
-### NemoClaw (agent NVIDIA isolé)
-
-NemoClaw enferme un agent dans un sandbox : réseau filtré, accès disque limité, copie du projet. **Ce n'est pas l'outil pour coder au quotidien**, car il faut envoyer le projet, puis récupérer un patch. Il sera utile sur le Spark pour des agents autonomes, comme une revue de code automatique ou des tâches de nuit.
-
-Le sandbox `patate` est installé et **arrêté**. Pour le démarrer :
-
-```bash
-nemo-deepagents patate start
-```
-
-Ensuite, deux façons d'utiliser l'agent :
-- **en chat**, dans le terminal :
-  ```bash
-  nemo-deepagents launch patate
-  ```
-- **avec une tâche précise**, sans interaction :
-  ```bash
-  nemo-deepagents patate exec --workdir /sandbox -- dcode -n "<tâche>"
-  ```
-
-Pour faire passer des fichiers entre le PC et le sandbox :
-
-```bash
-nemo-deepagents patate upload <fichier-ou-dossier> /sandbox
-nemo-deepagents patate download /sandbox/<chemin> <destination>
-```
-
-Pour l'arrêter :
-
-```bash
-nemo-deepagents patate stop
-```
-
-Le bouton du panneau fait la même chose. Après un changement de modèle, il n'y a rien à refaire : NemoClaw utilise toujours le nom `qwen-local`.
-
-### Entraîner le modèle sur les normes (LoRA)
-
-Ce n'est **pas encore fait**, et c'est à faire une fois tes vraies normes indexées.
-
-> Le fine-tuning apprend au modèle le **style et le vocabulaire** des normes. Il ne lui fait pas retenir les règles exactes de façon fiable. **La source de vérité reste la recherche dans les documents.** Le mieux est de combiner les deux.
-
-1. **Télécharge le modèle de base** en pleine précision (`models/Qwen3.5-4B`, ~9 Go). Le script `./scripts/01-telecharger-modeles.sh` le fait.
-2. **Génère le jeu de questions/réponses** à partir des documents indexés, puis relis-en un échantillon :
-   ```bash
-   source .env && docker compose exec -e LITELLM_KEY=$LITELLM_MASTER_KEY mcp-docs python /finetune/generer_dataset.py
-   ```
-3. **Passe en *Mode fine-tuning*** depuis le panneau, pour libérer le GPU.
-4. **Lance l'entraînement :**
-   ```bash
-   python3 -m venv .venv-finetune && .venv-finetune/bin/pip install -r finetune/requirements.txt
-   .venv-finetune/bin/python finetune/entrainer_lora.py
-   ```
-5. **Active l'adaptateur.** Dans `.env`, décommente la ligne `VLLM_LORA_ARGS=…`, puis redémarre vLLM. Le modèle `normes` devient disponible dans OpenCode, avec `/models`.
-
 ---
 
 ## 7. Plusieurs utilisateurs
@@ -405,15 +339,13 @@ C'est la seule différence avec le PC de test : `opencode` s'utilise exactement 
 | vLLM : `invalid loads value` au démarrage | Les guillemets JSON de `VLLM_EXTRA_ARGS` ont été retirés | Entourer le JSON d'apostrophes : `'{"cle":valeur}'` |
 | vLLM : pas assez de mémoire pour le contexte | `VLLM_MAX_MODEL_LEN` trop grand pour la VRAM | Baisser `VLLM_MAX_MODEL_LEN` ou `VLLM_GPU_UTIL` dans `.env` |
 | Plus de RAM disponible, PC lent | TEI qui garde 10 à 15 Go par instance | Déjà corrigé (`MALLOC_ARENA_MAX`, lots réduits). Vérifier avec `docker stats` |
-| OpenCode ou NAT : `401` / clé refusée | Clé incomplète ou mal collée | `curl -s localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_API_KEY"`, puis recréer la clé et relancer `installer-opencode.sh` |
+| OpenCode : `401` / clé refusée | Clé incomplète ou mal collée | `curl -s localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_API_KEY"`, puis recréer la clé et relancer `installer-opencode.sh` |
 | `opencode : commande introuvable` | Terminal ouvert avant l'installation | `source ~/.bashrc` |
 | OpenCode en mode `run` : « permission requested… auto-rejecting » | Les modifications demandent ton accord, et il n'y a pas d'interface en mode `run` | Utiliser `opencode` (interactif), ou `--auto` sur un projet de test |
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
-| NemoClaw : `doctor` affiche `Inference route … 503` | La passerelle OpenShell ne joint pas vLLM | Vérifier que `OPENSHELL_BRIDGE_IP` (dans `.env`) correspond à `docker network inspect openshell-docker`, puis `docker compose up -d vllm` |
 | Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d vllm` |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
-| NemoClaw : pip bloqué (`403 Forbidden`) | Pare-feu du sandbox | Télécharger les paquets sur le poste, puis les installer hors ligne dans le sandbox (`pip download`, `upload`, `pip install --no-index`) |
 
 ---
 
@@ -438,10 +370,8 @@ IA locale/
 ├── clients/
 │   ├── opencode.json           modèle de config OpenCode (utilisé par le script d'installation)
 │   └── AGENTS.md               consignes de l'agent, à copier dans chaque projet
-├── agent/config.yml            agent NVIDIA NAT
 ├── finetune/                   génération du jeu d'entraînement et entraînement LoRA
 ├── loras/                      adaptateurs entraînés
-├── workspace/                  projet de test de l'agent NAT
 ├── panneau/                    panneau web (server.py, index.html)
 └── scripts/
     ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
@@ -460,7 +390,7 @@ IA locale/
 | 4000 | LiteLLM (API des modèles et interface d'admin `/ui`) | ce PC (le Spark : via Caddy en 443) |
 | 6333 | Qdrant (tableau de bord : `/dashboard`) | ce PC |
 | 7000 | Panneau web | ce PC |
-| 8000 | vLLM | ce PC, et le sandbox NemoClaw |
+| 8000 | vLLM | ce PC |
 | 9901 | MCP docs-internes | ce PC (le Spark : via Caddy, `/mcp`) |
 
 ### Variables de `.env`
@@ -478,8 +408,7 @@ IA locale/
 | `VLLM_LORA_ARGS` | Active l'adaptateur `normes` (vide tant qu'il n'est pas entraîné) |
 | `VLLM_IMAGE` | Spark uniquement : image Docker de vLLM |
 | `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
-| `MCP_OUTILS_CODE` | 1 : outils fichiers/commandes (agent NAT local). 0 : seulement la recherche dans les normes |
-| `OPENSHELL_BRIDGE_IP` | Adresse du pont NemoClaw (vide si NemoClaw est absent) |
+| `MCP_OUTILS_CODE` | 0 (défaut) : seulement la recherche dans les normes. 1 : ajoute des outils fichiers/commandes sur `workspace/` |
 | `SPARK_HOSTNAME`, `MCP_TOKEN` | Spark uniquement : nom du serveur et jeton d'équipe pour les normes |
 
 ### Fichiers sur chaque poste (créés par `installer-opencode.sh`)

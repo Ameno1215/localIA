@@ -32,11 +32,11 @@ echo "==> docker compose + Python venv/pip"
 docker compose version >/dev/null 2>&1 || sudo apt-get install -y docker-compose-v2
 sudo apt-get install -y python3.12-venv python3-pip
 
-echo "==> Outils Python côté hôte (.venv) : hf CLI + NeMo Agent Toolkit"
+echo "==> Outils Python côté hôte (.venv) : hf CLI (téléchargement des modèles)"
 cd "$(dirname "$0")/.."
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r agent/requirements.txt
+.venv/bin/pip install "huggingface_hub[cli]"
 
 echo
 echo "OK. Redémarre la machine, puis vérifie :"

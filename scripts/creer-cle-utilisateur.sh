@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Crée une clé API LiteLLM personnelle.  Usage : ./scripts/creer-cle-utilisateur.sh prenom.nom
-# Chaque personne utilise SA clé dans Open WebUI / OpenCode / l'agent NAT -> suivi et quotas par personne.
+# Chaque personne utilise SA clé dans Open WebUI / OpenCode -> suivi et quotas par personne.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source .env

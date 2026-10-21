@@ -17,8 +17,6 @@ PROJET = Path(__file__).resolve().parent.parent
 PAGE = Path(__file__).resolve().parent / "index.html"
 PAGE_GUIDE = Path(__file__).resolve().parent / "guide.html"
 GUIDE = PROJET / "GUIDE.md"
-SANDBOX = os.environ.get("NEMOCLAW_SANDBOX", "patate")
-NEMO = str(Path.home() / ".local/bin/nemo-deepagents")
 
 # Services du docker-compose.yml : rôle + sonde HTTP facultative (depuis l'hôte)
 SERVICES = {
@@ -29,7 +27,7 @@ SERVICES = {
     "qdrant": {"role": "Base vectorielle du RAG", "sonde": "http://127.0.0.1:6333/readyz", "lien": "http://localhost:6333/dashboard"},
     "tei-embed": {"role": "Embeddings bge-m3 (CPU)", "sonde": None, "lien": None},
     "tei-rerank": {"role": "Reranker bge-m3 (CPU)", "sonde": None, "lien": None},
-    "mcp-docs": {"role": "Outils agents : normes + code", "sonde": None, "lien": None},
+    "mcp-docs": {"role": "Recherche dans les normes (MCP)", "sonde": None, "lien": None},
 }
 
 # Modes prêts à l'emploi : services à démarrer (les autres sont arrêtés)
@@ -118,21 +116,6 @@ def etat_machine() -> dict:
     }
 
 
-def etat_nemoclaw() -> dict:
-    if not Path(NEMO).exists():
-        return {"installe": False}
-    r = lancer([NEMO, "list", "--json"], timeout=60, limite=None)
-    try:
-        data = json.loads(r["sortie"][r["sortie"].find("{"):])
-        box = next((s for s in data.get("sandboxes", []) if s.get("name") == SANDBOX), None)
-    except (ValueError, StopIteration):
-        box = None
-    st = lancer(["openshell", "sandbox", "get", SANDBOX], timeout=30, limite=None)
-    phase = next((l for l in st["sortie"].splitlines() if "Phase:" in l), "")
-    pret = "Ready" in phase
-    return {"installe": True, "sandbox": SANDBOX, "info": box, "pret": pret}
-
-
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -164,8 +147,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(corps)
         if self.path == "/api/etat":
             return self._json(200, {"services": etat_services(), "machine": etat_machine()})
-        if self.path == "/api/nemoclaw":
-            return self._json(200, etat_nemoclaw())
         if self.path.startswith("/api/logs/"):
             nom = self.path.rsplit("/", 1)[-1]
             if nom not in SERVICES:
@@ -198,8 +179,6 @@ class Handler(BaseHTTPRequestHandler):
                     sortie += r["sortie"]
                     return self._json(200, {"ok": r["ok"], "sortie": sortie})
                 return self._json(200, {"ok": True, "sortie": sortie})
-            if action == "nemoclaw" and cible in ("start", "stop"):
-                return self._json(200, lancer([NEMO, SANDBOX, cible], timeout=300))
             return self._json(400, {"erreur": "action inconnue"})
         finally:
             verrou.release()

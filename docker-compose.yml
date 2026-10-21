@@ -1,8 +1,7 @@
 # Stack IA locale — identique (à la taille du modèle près) à ce qui tournera sur le DGX Spark.
 #
 #   Open WebUI (3000) ─┐
-#   OpenCode / IDE ────┼─> LiteLLM (4000) ─> vLLM (8000, GPU)       <- LLM + LoRA "normes"
-#   Agent NVIDIA NAT ──┘        │
+#   OpenCode / IDE ────┴─> LiteLLM (4000) ─> vLLM (8000, GPU)       <- LLM + LoRA "normes"
 #        │                      └─> TEI embeddings (CPU)
 #        └──> MCP docs-internes (9901) ─> Qdrant (6333) + TEI embed/rerank (CPU)
 #
@@ -45,9 +44,6 @@ services:
       - ./loras:/loras:ro
     ports:
       - "127.0.0.1:8000:8000"
-      # Pont réseau OpenShell (NemoClaw) : la passerelle joint vLLM via host.openshell.internal.
-      # Visible seulement de la machine et du sandbox. 127.0.0.2 (inutilisé) si NemoClaw absent.
-      - "${OPENSHELL_BRIDGE_IP:-127.0.0.2}:8000:8000"
     ipc: host
     deploy:
       resources:
@@ -74,8 +70,7 @@ services:
     ports: ["127.0.0.1:6333:6333"]
     restart: unless-stopped
 
-  # Serveur MCP maison : recherche dans les normes/docs + outils fichiers sur ./workspace
-  # Utilisé par l'agent NVIDIA (NAT), OpenCode et Open WebUI.
+  # Serveur MCP maison : recherche dans les normes/docs. Utilisé par OpenCode et Open WebUI.
   mcp-docs:
     build: ./services/mcp-docs
     environment:
@@ -84,7 +79,7 @@ services:
       RERANK_URL: http://tei-rerank
       COLLECTION: docs_internes
       WORKSPACE: /workspace
-      OUTILS_CODE: ${MCP_OUTILS_CODE:-1}
+      OUTILS_CODE: ${MCP_OUTILS_CODE:-0}
     volumes:
       - ./docs-internes:/docs:ro
       - ./workspace:/workspace

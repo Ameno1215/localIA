@@ -1,9 +1,9 @@
 """Serveur MCP "docs-internes".
 
-Outils exposés aux agents (NVIDIA NAT, OpenCode, Open WebUI) :
+Outils exposés aux agents (OpenCode, Open WebUI) :
   - rechercher_docs : RAG sur les normes / docs internes (Qdrant + bge-m3 + reranker)
   - lister_fichiers / lire_fichier / ecrire_fichier / executer_commande : travail sur ./workspace,
-    seulement si OUTILS_CODE=1 (agent NAT local). OpenCode utilise ses propres outils, sur le poste.
+    seulement si OUTILS_CODE=1 (désactivé par défaut). OpenCode utilise ses propres outils, sur le poste.
 """
 
 import html
@@ -27,9 +27,9 @@ COLLECTION = os.environ.get("COLLECTION", "docs_internes")
 # "tei" : Text Embeddings Inference (PC x86, CPU). "vllm" : vLLM en mode pooling (Spark ARM64, où TEI n'existe pas).
 RAG_BACKEND = os.environ.get("RAG_BACKEND", "tei")
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace")).resolve()
-# 1 : outils fichiers + commandes sur ./workspace (agent NAT local).
+# 1 : outils fichiers + commandes sur ./workspace (aucun client ne les utilise aujourd'hui).
 # 0 : seulement rechercher_docs — obligatoire dès que le serveur est joignable par le réseau (Spark).
-OUTILS_CODE = os.environ.get("OUTILS_CODE", "1") == "1"
+OUTILS_CODE = os.environ.get("OUTILS_CODE", "0") == "1"
 DOCS = Path(os.environ.get("DOCS_DIR", "/docs")).resolve()
 # Adresse sous laquelle le navigateur de l'utilisateur joint ce serveur (liens vers les sources)
 DOCS_PUBLIC_URL = os.environ.get("DOCS_PUBLIC_URL", "http://localhost:9901").rstrip("/")

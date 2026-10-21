@@ -67,8 +67,6 @@ Crée la configuration à partir du modèle (pense à changer les secrets), puis
 | Recherche dans les normes (RAG + MCP) | ✅ testé, avec la norme d'exemple seulement |
 | Clés et quotas par personne (LiteLLM) | ✅ testé |
 | Panneau web de contrôle | ✅ testé |
-| Agent NVIDIA NAT | ✅ testé |
-| NemoClaw | ✅ installé, arrêté (réservé aux agents autonomes) |
 | Open WebUI | ⚠️ prêt, compte admin à créer |
 | Fine-tuning LoRA `normes` | ⏳ scripts prêts, pas encore lancé |
 | Configuration DGX Spark | ⏳ fichiers prêts, non testés |
