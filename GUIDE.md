@@ -75,7 +75,7 @@ Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` p
 2. Dans `.env`, règle :
    - `VLLM_MODEL=<dossier>` ;
    - `VLLM_MAX_MODEL_LEN`, la taille de contexte ;
-   - `VLLM_TOOL_PARSER`, le format d'appels d'outils de la famille du modèle (`hermes` ou `qwen3_coder`) ;
+   - `VLLM_TOOL_PARSER`, le format d'appels d'outils de la famille du modèle (`hermes` pour Qwen3-4B, `qwen3_xml` pour Qwen3.6 et 3.8, d'après NVIDIA) ;
    - `VLLM_EXTRA_ARGS`, les options propres au modèle.
 3. Redémarre vLLM : bouton **Redémarrer** sur la carte `vllm` du panneau, ou `docker compose up -d vllm`.
 4. Vérifie dans les logs qu'il démarre, et note la ligne `GPU KV cache size`.
@@ -298,7 +298,7 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    ```bash
    ./scripts/02-verifier-spark.sh
    ```
-   Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s), car vLLM mesure ~98 tok/s sur GB10. Si une ligne échoue, voir la section 9.
+   Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s) : NVIDIA mesure 124 tok/s pour ce modèle sur Spark, pour une seule requête de code (le script en mesure une aussi, avec le préremplissage compté, donc un peu moins). Si une ligne échoue, voir la section 9.
 7. **Crée tout de suite le compte admin d'Open WebUI** : ouvre `https://<SPARK_HOSTNAME>:8443` et inscris-toi. **Le premier compte créé devient administrateur**, et la page est joignable par tout le réseau, donc fais-le avant d'annoncer le serveur à l'équipe. Ajoute ensuite le MCP des normes (section 6).
 8. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes (le navigateur affiche sinon un avertissement) :
    ```bash
@@ -306,9 +306,9 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    ```
 
 Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
-- **Modèle :** `Qwen3.6-35B-A3B` NVFP4 (profil recommandé par NVIDIA), avec 128K de contexte et 8 requêtes en parallèle.
-- **Réglages vLLM :** ceux de la recette vérifiée pour le DGX Spark sur [recipes.vllm.ai](https://recipes.vllm.ai/Qwen/Qwen3.6-35B-A3B?hardware=dgx_spark_gb10). Attention FlashInfer, experts NVFP4 via Marlin, décodage spéculatif MTP (`VLLM_SPEC_ARGS`), et 50 % de la mémoire unifiée, car le reste est partagé avec le système et les autres services.
-- **Image vLLM :** réglable avec `VLLM_IMAGE` dans `.env`. Par défaut c'est la même que sur le PC (v0.30.0, disponible en arm64).
+- **Modèle :** `Qwen3.6-35B-A3B` NVFP4 (recette NVIDIA validée), avec 262 144 jetons de contexte et 8 requêtes en parallèle.
+- **Réglages vLLM :** ceux de la **recette officielle NVIDIA** du modèle (dépôt [local-ai-inference-recipes](https://github.com/NVIDIA/local-ai-inference-recipes), validée le 19/10/2026). Un profil par modèle dans `config/modeles-spark/`. Le conteneur reçoit aussi les réglages que NVIDIA met dans toutes ses recettes : mémoire partagée de 16 Go, mémoire verrouillée illimitée, caches de compilation conservés dans `cache/` (démarrages suivants plus rapides).
+- **Image vLLM :** conteneur NGC de NVIDIA (`nvcr.io/nvidia/vllm:26.10.pre1-py3`, public, ARM64) pour le modèle par défaut. Réglable avec `VLLM_IMAGE` ; chaque profil indique l'image de sa recette. Le panneau web affiche la mémoire unifiée du Spark via la jauge RAM.
 - **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64.
 - **Accès réseau :** seul **Caddy** (HTTPS) est joignable depuis le réseau. Port 443 : LiteLLM sur `/` (pour OpenCode) et la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Port 8443 : **Open WebUI**, le chat web, à ouvrir sur `https://<SPARK_HOSTNAME>:8443`. Tout le reste n'écoute qu'en local.
 - **Serveur MCP :** il n'expose que `rechercher_docs` (`OUTILS_CODE=0`). Les outils fichiers et commandes ne doivent jamais être joignables par le réseau.
@@ -340,22 +340,24 @@ Chaque modèle a besoin de ses propres réglages (image vLLM, format d'appels d'
 
 Pour comparer deux modèles : `utiliser` le premier, lance `02-verifier-spark.sh` et note le débit, puis fais pareil avec le second. Les clients n'ont rien à changer, le nom reste `qwen-local`.
 
-Profils fournis (liste revue le 21/10/2026 d'après Hugging Face, classés par mémoire utilisée) :
+Profils fournis (liste revue le 21/10/2026 d'après Hugging Face, alignée sur les recettes officielles NVIDIA). « Débit » = génération de code, une seule requête, mesuré par NVIDIA sur un DGX Spark :
 
-| Profil | Type | Mémoire | À savoir |
-|---|---|---|---|
-| `qwen3.8-flash-next-fp4-local` | MoE, 125 Md au total, 6 Md actifs | ~100 Go | **Pour viser ~90 % de la mémoire.** Qwen3.8 de NVIDIA, validé par NVIDIA sur DGX Spark, perte de précision très faible. Image **communautaire** (`eugr/spark-vllm-b12x`) et conteneur moins isolé exigés par la fiche |
-| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 120 Md, 12 Md actifs | 91 Go | Recette GB10 vérifiée, vLLM v0.31 |
-| `ornith-1.5-122b-nvfp4` | MoE, 122 Md | ~70 Go | **Expérimental** : publié le 20/10, scores annoncés par l'éditeur (excellents en code), aucune validation Spark. Licence MIT |
-| `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | Modèle du playbook NVIDIA pour le Spark, image vLLM dédiée (`qwen38`) |
-| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | Version 8 bits du modèle par défaut : plus fidèle, un peu plus lente |
-| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md actifs | 21 Go | **Modèle par défaut**, rapide, réglages GB10 vérifiés |
-| `bolt-74b-a9b-24gb` | MoE, 9 Md actifs, 74 Md au total | 24 Go | Conçu pour les agents locaux, **expérimental** : image construite sur place |
-| `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE, 3 Md actifs | 18 Go | Modèle NVIDIA, peu gourmand en mémoire |
+| Profil | Type | Mémoire | Débit | À savoir |
+|---|---|---|---|---|
+| `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE, 3 Md actifs | 18 Go | 144 tok/s | Le plus rapide. Image communautaire figée, brouillon DSpark |
+| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md actifs | 21 Go | 124 tok/s | **Modèle par défaut.** Conteneur NGC de NVIDIA |
+| `bolt-74b-a9b-24gb` | MoE hybride, 9 Md actifs, 74 Md au total | 24 Go | 89 tok/s | Conçu pour les agents locaux. Image communautaire figée, brouillon LiLiCorr |
+| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | non mesuré | Version 8 bits du modèle par défaut : plus fidèle, un peu plus lente |
+| `ornith-1.5-122b-nvfp4` | MoE, 122 Md | ~70 Go | non mesuré | **Expérimental** : publié le 20/10, scores annoncés par l'éditeur, aucune validation Spark. Licence MIT |
+| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 120 Md, 12 Md actifs | 75 Go | 51 tok/s | Image communautaire figée, brouillon LiLiCorr. Prend l'essentiel de la mémoire |
+| `qwen3.8-flash-next-fp4-local` | MoE, 125 Md au total, 6 Md actifs | ~100 Go | 38 tok/s | **Pour viser ~90 % de la mémoire.** Image communautaire figée et conteneur moins isolé exigés par la recette |
+| `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | 37 tok/s | Modèle recommandé par le playbook NVIDIA vLLM. Conteneur NGC, brouillon DFlash |
+
+**Remplir la mémoire ne rend pas plus rapide** : les modèles de 75 à 100 Go sont environ 3 fois plus lents que le modèle par défaut. À plusieurs utilisateurs, le débit par personne baisse encore.
 
 Écartés après examen : DeepSeek V4.1 Flash (765 Go), GLM-5.3 (328 Go au minimum) et Kimi K3 (2,8 To) ne tiennent pas sur un Spark ; Mistral Medium 3.5 128B est un modèle dense (environ 90 Go lus à chaque mot, donc très lent) ; Kolibri 1 ne gère que l'allemand et l'anglais ; Step 3.7 Flash (117 Go) ne laisse pas de marge.
 
-**Utiliser ~90 % de la mémoire.** Compte 0.8 de réservation pour vLLM (`VLLM_GPU_UTIL`) plus 0.08 pour les embeddings et le reranker. Un seul modèle de plus de 90 Go à la fois, et rien d'autre de lourd sur le GPU. Pour tester les gros modèles dans l'ordre de prudence : `nemotron-3.5-super…` (vérifié), `qwen3.8-flash-next…` (validé par NVIDIA mais image communautaire), puis `ornith…` (le plus récent). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
+**Utiliser ~90 % de la mémoire.** Les recettes NVIDIA réservent 0.8 pour vLLM (`VLLM_GPU_UTIL`), plus 0.08 pour les embeddings et le reranker. Un seul gros modèle à la fois, et rien d'autre de lourd sur le GPU. Pour tester les gros modèles : `nemotron-3.5-super…`, puis `qwen3.8-flash-next…`, puis `ornith…` (le plus récent et le moins validé). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
 
 Où trouver d'autres modèles :
 - **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.
@@ -393,7 +395,6 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
 | Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose up -d vllm` |
-| Bolt : `./scripts/modeles.py utiliser bolt-74b-a9b-24gb` échoue à la construction ou à la finalisation de l'image | La construction et la finalisation (`vllm download-kernels`, qui exige un GPU) ont besoin d'internet | Vérifier `docker run --rm --gpus all ubuntu nvidia-smi` et internet, puis relancer avec `--reconstruire` |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---
@@ -417,7 +418,6 @@ IA locale/
 ├── models/                     poids des modèles (hors git)
 ├── docs-internes/              tes normes et documents (indexés pour la recherche)
 ├── services/mcp-docs/          serveur d'outils : server.py (recherche), ingest.py (indexation)
-├── services/vllm-bolt/         Dockerfile de l'image vLLM pour le modèle Bolt
 ├── clients/
 │   ├── opencode.json           modèle de config OpenCode (utilisé par le script d'installation)
 │   └── AGENTS.md               consignes de l'agent, à copier dans chaque projet

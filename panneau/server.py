@@ -117,8 +117,14 @@ def etat_machine() -> dict:
     for ligne in Path("/proc/meminfo").read_text().splitlines():
         k, v = ligne.split(":", 1)
         mem[k] = int(v.split()[0]) // 1024  # Mo
+    def entier(v):
+        try:
+            return int(v)
+        except ValueError:
+            return None  # « [N/A] » : sur le Spark (mémoire unifiée), nvidia-smi ne donne pas la mémoire du GPU
+
     return {
-        "gpu": {"nom": g[0], "utilise": int(g[1]), "total": int(g[2]), "charge": int(g[3]), "driver": g[4]} if len(g) == 5 else None,
+        "gpu": {"nom": g[0], "utilise": entier(g[1]), "total": entier(g[2]), "charge": entier(g[3]), "driver": g[4]} if len(g) == 5 else None,
         "ram": {"total": mem["MemTotal"], "dispo": mem["MemAvailable"]},
     }
 

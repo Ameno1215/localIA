@@ -2,6 +2,22 @@
 
 Date : 21/10/2026. Branche `spark`. Aucun test n'a été fait sur un vrai Spark : cet audit compare des fichiers, pas des mesures sur ta machine.
 
+## Statut : corrections appliquées le 21/10/2026
+
+Les sections 3 à 5 ci-dessous décrivent l'état **avant** correction. Le plan de la section 7 a été appliqué :
+
+| # | Correction | Fait |
+|---|---|---|
+| 1 | Panneau : `N/A` du GPU accepté, mémoire unifiée affichée via la jauge RAM | oui, testé avec les deux formats de sortie |
+| 2 | `shm_size`, `ulimits` et caches de compilation dans la base Spark | oui, rendu Compose vérifié |
+| 3 | Modèle par défaut aligné sur la recette NVIDIA (image NGC, `qwen3_xml`, 0.8, MTP 4, `safetensors`) | oui |
+| 4 | Bolt remplacé par la recette NVIDIA ; `services/vllm-bolt/` et le code de build supprimés | oui |
+| 5 | Images figées et profils alignés : Flash Next, Super VL, Qwen3.8 27B, Lightning (brouillons téléchargés avec le modèle) | oui, les 8 profils se rendent sans erreur |
+| 6 | OpenCode : limite de sortie 4096 → 32768 | oui dans `clients/opencode.json` |
+| 7 | Vérification au premier démarrage sur le Spark | **reste à faire sur la machine** |
+
+Ce qui n'a PAS pu être vérifié ici : le lancement réel des conteneurs (aucun GPU Spark), et le fonctionnement de `vllm` dans l'image NGC (seule sa présence en ARM64 est confirmée). Un poste déjà installé garde son ancien `~/.config/opencode/opencode.json` (limite 4096) jusqu'à une nouvelle exécution de `installer-opencode.sh`.
+
 ## 1. Ce que NVIDIA fournit, et ses limites
 
 | Source | Contenu | Remarque |

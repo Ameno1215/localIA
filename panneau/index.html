@@ -276,8 +276,14 @@ async function rafraichir() {
     const g = d.machine.gpu;
     if (g) {
       $("#gpu-nom").textContent = `${g.nom.replace("NVIDIA GeForce ", "")} · driver ${g.driver}`;
-      $("#gpu-val").textContent = `${(g.utilise / 1024).toFixed(1)} / ${(g.total / 1024).toFixed(1)} Go VRAM · ${g.charge} %`;
-      $("#gpu-barre").style.width = `${Math.round(100 * g.utilise / g.total)}%`;
+      if (g.total) {
+        $("#gpu-val").textContent = `${(g.utilise / 1024).toFixed(1)} / ${(g.total / 1024).toFixed(1)} Go VRAM · ${g.charge} %`;
+        $("#gpu-barre").style.width = `${Math.round(100 * g.utilise / g.total)}%`;
+      } else {
+        // Mémoire unifiée (Spark) : la mémoire se lit dans la jauge RAM ; ici seulement la charge du GPU
+        $("#gpu-val").textContent = `mémoire unifiée (voir RAM) · charge ${g.charge ?? "?"} %`;
+        $("#gpu-barre").style.width = `${g.charge || 0}%`;
+      }
     }
     const m = d.machine.ram;
     $("#ram-val").textContent = `${(m.dispo / 1024).toFixed(1)} Go libres sur ${(m.total / 1024).toFixed(0)}`;

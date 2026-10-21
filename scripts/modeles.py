@@ -202,6 +202,9 @@ def generer(hf_id: str, nom: str, recette: dict, opts) -> str:
         flags["--trust-remote-code"] = None
 
     parser = flags.get("--tool-call-parser") or "hermes"
+    if parser == "qwen3_coder" and "qwen" in hf_id.lower():
+        parser = "qwen3_xml"
+        notes.append("Parser d'outils qwen3_xml au lieu de qwen3_coder : c'est celui que NVIDIA valide pour Qwen3.6 et 3.8.")
     valeurs = {}
     for flag, var in GEREES.items():
         if flag in flags:
@@ -345,22 +348,6 @@ def ecrire_env(chemin: Path, valeurs: dict[str, str]) -> None:
     chemin.write_text("\n".join(lignes) + "\n")
 
 
-def finaliser_image(image: str, commande: str) -> None:
-    """Étape qui exige le GPU (impossible pendant « docker build ») : lancée dans un conteneur, puis enregistrée dans l'image."""
-    entree, cmd = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Entrypoint}}|{{json .Config.Cmd}}"],
-                                 capture_output=True, text=True, check=True).stdout.strip().split("|", 1)
-    cmd = "[]" if cmd == "null" else cmd
-    nom = "ia-locale-finalisation"
-    subprocess.run(["docker", "rm", "-f", nom], capture_output=True)
-    print(f"Finalisation de l'image (GPU requis) : {commande}")
-    if subprocess.run(["docker", "run", "--gpus", "all", "--name", nom, "--entrypoint", "sh", image, "-c", commande]).returncode != 0:
-        subprocess.run(["docker", "rm", "-f", nom], capture_output=True)
-        erreur("l'étape de finalisation a échoué (internet et GPU requis)")
-    subprocess.run(["docker", "commit", "--change", f"ENTRYPOINT {entree}", "--change", f"CMD {cmd}", nom, image],
-                   capture_output=True, check=True)
-    subprocess.run(["docker", "rm", "-f", nom], capture_output=True)
-
-
 def cmd_utiliser(a) -> None:
     p = lire_profil(a.nom)
     env = PROJET / a.env
@@ -389,15 +376,6 @@ def cmd_utiliser(a) -> None:
     fichier_env = PROJET / ".env.vllm"
     fichier_env.write_text("".join(f"{k}={val}\n" for k, val in extra_env.items()))
     print(f"{a.env} mis à jour pour « {a.nom} »" + (f" ; .env.vllm : {', '.join(extra_env)}" if extra_env else ""))
-    if p.get("IMAGE_CONTEXTE") and not a.sans_telecharger:
-        image = p["VLLM_IMAGE"]
-        existe = subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0
-        if a.reconstruire or not existe:
-            print(f"Construction de l'image {image} (internet requis, plusieurs minutes)…")
-            if subprocess.run(["docker", "build", "-t", image, str(PROJET / p["IMAGE_CONTEXTE"])]).returncode != 0:
-                erreur("la construction de l'image a échoué (voir GUIDE, section 9)")
-            if p.get("IMAGE_APRES_BUILD"):
-                finaliser_image(image, p["IMAGE_APRES_BUILD"])
     if a.sans_redemarrer:
         return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
@@ -426,7 +404,7 @@ def main() -> None:
     c = sp.add_parser("lister"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_lister)
     c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
     c = sp.add_parser("utiliser"); c.add_argument("nom"); c.add_argument("--env", default=".env")
-    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.add_argument("--reconstruire", action="store_true"); c.set_defaults(f=cmd_utiliser)
+    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
     a = ap.parse_args()
     a.f(a)
 

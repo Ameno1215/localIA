@@ -49,6 +49,15 @@ services:
         required: false
     environment:
       VLLM_USE_RUST_FRONTEND: "1"
+    # Comme dans toutes les recettes NVIDIA : mémoire partagée, mémoire verrouillée, caches de compilation persistants
+    shm_size: 16g
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    volumes:
+      - ./cache/vllm:/root/.cache/vllm
+      - ./cache/flashinfer:/root/.cache/flashinfer
+      - ./cache/triton:/root/.triton
     ports: !override
       - "127.0.0.1:8000:8000"
 
