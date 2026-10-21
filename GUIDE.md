@@ -285,11 +285,12 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    ```bash
    cp .env.spark.example .env
    ```
-   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`.
+   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`. Ce fichier contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
 4. **Démarre la stack :**
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d
+   docker compose up -d
    ```
+   Le panneau web (`./scripts/panneau.sh`) écoute sur `127.0.0.1:7000` du Spark. Depuis ton poste : `ssh -L 7000:localhost:7000 <utilisateur>@<spark>`, puis http://localhost:7000.
 5. **Attends que vLLM ait chargé le modèle de 35B.** Ça prend plusieurs minutes, et la commande `docker compose logs -f vllm` montre la progression.
 6. **Vérifie que tout répond** : chat, appels d'outils, débit, embeddings et reranker.
    ```bash
@@ -344,7 +345,7 @@ C'est la seule différence avec le PC de test : `opencode` s'utilise exactement 
 | OpenCode en mode `run` : « permission requested… auto-rejecting » | Les modifications demandent ton accord, et il n'y a pas d'interface en mode `run` | Utiliser `opencode` (interactif), ou `--auto` sur un projet de test |
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
-| Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d vllm` |
+| Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose up -d vllm` |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---

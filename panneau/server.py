@@ -25,19 +25,26 @@ SERVICES = {
     "postgres": {"role": "Base de LiteLLM (clés, conso)", "sonde": None, "lien": None},
     "open-webui": {"role": "Chat web multi-comptes", "sonde": "http://127.0.0.1:3000/health", "lien": "http://localhost:3000"},
     "qdrant": {"role": "Base vectorielle du RAG", "sonde": "http://127.0.0.1:6333/readyz", "lien": "http://localhost:6333/dashboard"},
-    "tei-embed": {"role": "Embeddings bge-m3 (CPU)", "sonde": None, "lien": None},
-    "tei-rerank": {"role": "Reranker bge-m3 (CPU)", "sonde": None, "lien": None},
+    "tei-embed": {"role": "Embeddings bge-m3", "sonde": None, "lien": None},
+    "tei-rerank": {"role": "Reranker bge-reranker-v2-m3", "sonde": None, "lien": None},
     "mcp-docs": {"role": "Recherche dans les normes (MCP)", "sonde": None, "lien": None},
+    "caddy": {"role": "Accès HTTPS depuis le réseau (Spark)", "sonde": None, "lien": None},
 }
+
+# Seuls les services définis par la config en cours sont gérés (caddy n'existe que sur le Spark)
+_definis = subprocess.run(["docker", "compose", "config", "--services"], cwd=PROJET, capture_output=True, text=True).stdout.split()
+if _definis:
+    SERVICES = {n: v for n, v in SERVICES.items() if n in _definis}
 
 # Modes prêts à l'emploi : services à démarrer (les autres sont arrêtés)
 MODES = {
     "tout": list(SERVICES),
-    "chat": ["vllm", "litellm", "postgres", "open-webui"],
-    "agent": ["vllm", "litellm", "postgres", "qdrant", "tei-embed", "tei-rerank", "mcp-docs"],
-    "finetune": ["qdrant", "tei-embed", "tei-rerank", "mcp-docs"],
+    "chat": ["vllm", "litellm", "postgres", "open-webui", "caddy"],
+    "agent": ["vllm", "litellm", "postgres", "qdrant", "tei-embed", "tei-rerank", "mcp-docs", "caddy"],
+    "finetune": ["qdrant", "tei-embed", "tei-rerank", "mcp-docs", "caddy"],
     "rien": [],
 }
+MODES = {nom: [s for s in svcs if s in SERVICES] for nom, svcs in MODES.items()}
 
 verrou = threading.Lock()  # une action docker à la fois
 
