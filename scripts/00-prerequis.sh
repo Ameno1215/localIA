@@ -36,7 +36,7 @@ echo "==> Outils Python côté hôte (.venv) : hf CLI (téléchargement des mod�
 cd "$(dirname "$0")/.."
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install "huggingface_hub[cli]"
+.venv/bin/pip install huggingface_hub
 
 echo
 echo "OK. Redémarre la machine, puis vérifie :"
