@@ -348,13 +348,15 @@ Profils fournis :
 | `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | Modèle du playbook NVIDIA pour le Spark, image vLLM dédiée (`qwen38`) |
 | `qwen3.6-27b-nvfp4` | Dense, 27 Md | 27 Go | Dense : génération plus lente qu'un MoE, qualité à comparer |
 | `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE hybride Mamba, 3 Md actifs | 18 Go | Modèle NVIDIA, peu gourmand en mémoire |
-| `nemotron-3-super-120b-a12b-nvfp4` | MoE, 12 Md actifs | 75 Go | Occupe l'essentiel de la mémoire. Réglages **non vérifiés** pour le Spark : à tester avec précaution |
+| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 12 Md actifs, 120 Md au total | 91 Go | Paru le 12/10/2026, remplace Nemotron 3 Super. Prend presque toute la mémoire ; vLLM v0.31 (image dédiée) |
+| `bolt-74b-a9b-24gb` | MoE hybride, 9 Md actifs, 74 Md au total | 24 Go | Paru en octobre 2026, conçu pour les agents locaux (outils, terminal). **Expérimental** : image construite sur place, pas de recette vérifiée |
 | `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | Même modèle que celui par défaut, en 8 bits : meilleure fidélité, un peu plus lent |
 | `ling-3.0-flash-fp4` | MoE, 124 Md au total | 85 Go | Le plus gros qui tienne à l'aise sur un Spark. Réglages **non vérifiés** pour le Spark |
 | `gemma-4-26b-a4b-nvfp4` | MoE, 4 Md actifs | 16 Go | Demande une image **non officielle** (`eugr/spark-vllm`) : à vérifier avant usage |
 
 Où trouver d'autres modèles :
 - **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.
+- **`nouveautes`** : les derniers modèles publiés sur Hugging Face par un auteur (`./scripts/modeles.py nouveautes nvidia`). Un modèle de la semaine n'a souvent pas encore de recette : le profil se rédige alors à la main d'après sa fiche (modèle : `bolt-74b-a9b-24gb.env`).
 - **Hugging Face** : les modèles NVIDIA au format NVFP4 sont dans l'organisation [nvidia](https://huggingface.co/nvidia). Un modèle qui n'a pas de recette GB10 n'est pas refusé, mais ses réglages sont à trouver à la main.
 - **NVIDIA** : les [playbooks du Spark](https://build.nvidia.com/spark) et le forum développeurs annoncent les modèles validés.
 
@@ -388,6 +390,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
 | Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose up -d vllm` |
+| Bolt : `./scripts/modeles.py utiliser bolt-74b-a9b-24gb` échoue pendant la construction de l'image (`download-kernels`) | L'étape veut peut-être un GPU, absent pendant un `docker build` | Lancer l'image à la main avec `--gpus all`, y exécuter `pip install b12x && vllm download-kernels`, puis `docker commit` sous le nom `ia-locale/vllm-bolt:local` |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---
@@ -411,6 +414,7 @@ IA locale/
 ├── models/                     poids des modèles (hors git)
 ├── docs-internes/              tes normes et documents (indexés pour la recherche)
 ├── services/mcp-docs/          serveur d'outils : server.py (recherche), ingest.py (indexation)
+├── services/vllm-bolt/         Dockerfile de l'image vLLM pour le modèle Bolt
 ├── clients/
 │   ├── opencode.json           modèle de config OpenCode (utilisé par le script d'installation)
 │   └── AGENTS.md               consignes de l'agent, à copier dans chaque projet

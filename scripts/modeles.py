@@ -2,6 +2,7 @@
 """Gère les modèles du DGX Spark : chercher, ajouter, télécharger, activer.
 
   ./scripts/modeles.py chercher [motif]          modèles dont la recette vLLM est vérifiée pour le GB10
+  ./scripts/modeles.py nouveautes [auteur]       derniers modèles publiés sur Hugging Face (sans attendre leur recette)
   ./scripts/modeles.py ajouter <id_hf> [options] crée le profil config/modeles-spark/<nom>.env d'après la recette
   ./scripts/modeles.py lister                    profils connus, téléchargés ou non, actif
   ./scripts/modeles.py telecharger <nom>         télécharge les poids dans ./models
@@ -101,9 +102,26 @@ def cmd_chercher(a) -> None:
     for r in lignes:
         vram = f"{r['vram_min']} Go" if r["vram_min"] else "?"
         print(f"{r['id']:58} {r['statut']:9} {r['params'] or '?':>6} {vram:>11}  {r['archi'] or ''} {r['precision'] or ''}")
-    print(f"\n{len(lignes)} modèle(s). Pour en ajouter un :  ./scripts/modeles.py ajouter <modèle>")
+    print(f"\n{len(lignes)} modèle(s). Pour en ajouter un :  ./scripts/modeles.py ajouter <modèle>   (modèles très récents :  nouveautes)")
     print("Le Spark a 128 Go de mémoire partagée avec le système et les autres services : jusqu'à ~85 Go de « Mémoire min » reste réaliste,")
     print("au-delà il y a trop peu de marge. Plus gros n'est pas plus rapide : la vitesse dépend surtout des paramètres actifs (MoE) et de la précision.")
+
+
+def cmd_nouveautes(a) -> None:
+    """Derniers modèles d'un auteur sur Hugging Face. Les récents n'ont souvent pas encore de recette vLLM."""
+    url = f"https://huggingface.co/api/models?author={a.auteur}&sort=createdAt&direction=-1&limit=200"
+    if a.motif:
+        url += f"&search={a.motif}"
+    req = urllib.request.Request(url, headers={"User-Agent": "ia-locale/modeles.py"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        modeles = json.load(r)
+    avec_recette = {r["id"] for r in catalogue()} if CACHE.exists() else set()
+    gen = {"text-generation", "image-text-to-text", "any-to-any"}
+    lignes = [m for m in modeles if m.get("pipeline_tag") in gen and not m["id"].endswith(("GGUF", "Base-BF16"))][: a.nombre]
+    print(f"{'Date':10}  {'Modèle':64} Recette GB10")
+    for m in lignes:
+        print(f"{m.get('createdAt', '')[:10]:10}  {m['id']:64} {'oui' if m['id'] in avec_recette else 'non (réglages à la main)'}")
+    print("\nAvec recette : ajouter <modèle>. Sans recette : lis la fiche Hugging Face et crée le profil à la main (exemple : bolt-74b-a9b-24gb.env).")
 
 
 # ----------------------------------------------------------------------------- profils
@@ -271,6 +289,15 @@ def telecharge(dossier: str) -> bool:
     return (PROJET / "models" / dossier / "config.json").exists()
 
 
+def extras(p: dict) -> list[str]:
+    """Modèles annexes du profil (ex. brouillon de décodage spéculatif)."""
+    return p.get("MODELE_EXTRA_HF", "").split()
+
+
+def tout_telecharge(p: dict) -> bool:
+    return telecharge(p["MODELE_DOSSIER"]) and all(telecharge(e.split("/")[-1]) for e in extras(p))
+
+
 def cmd_lister(a) -> None:
     actif = lire_env(PROJET / a.env).get("VLLM_MODEL")
     profils = sorted(PROFILS.glob("*.env"))
@@ -280,7 +307,7 @@ def cmd_lister(a) -> None:
     print(f"{'Profil':{larg}} {'Poids':14} {'Modèle'}")
     for f in profils:
         p = lire_profil(f.stem)
-        poids = "téléchargés" if telecharge(p["MODELE_DOSSIER"]) else "à télécharger"
+        poids = "téléchargés" if tout_telecharge(p) else "à télécharger"
         print(f"{f.stem:{larg}} {poids:14} {p.get('MODELE_HF', '?')}{'   ◀ actif' if p['VLLM_MODEL'] == actif else ''}")
 
 
@@ -298,11 +325,13 @@ def hf(args: list[str]) -> None:
 
 def cmd_telecharger(a) -> None:
     p = lire_profil(a.nom)
-    if telecharge(p["MODELE_DOSSIER"]) and not a.force:
+    if tout_telecharge(p) and not a.force:
         return print(f"{p['MODELE_HF']} est déjà dans models/{p['MODELE_DOSSIER']}")
     (PROJET / "models").mkdir(exist_ok=True)
-    hf(["download", p["MODELE_HF"], "--local-dir", f"models/{p['MODELE_DOSSIER']}"])
-    print(f"OK : models/{p['MODELE_DOSSIER']}")
+    for hf_id, dossier in [(p["MODELE_HF"], p["MODELE_DOSSIER"])] + [(e, e.split("/")[-1]) for e in extras(p)]:
+        if a.force or not telecharge(dossier):
+            hf(["download", hf_id, "--local-dir", f"models/{dossier}"])
+        print(f"OK : models/{dossier}")
 
 
 def ecrire_env(chemin: Path, valeurs: dict[str, str]) -> None:
@@ -321,7 +350,7 @@ def cmd_utiliser(a) -> None:
     env = PROJET / a.env
     if not env.exists():
         erreur(f"{a.env} introuvable : copie d'abord .env.spark.example en .env")
-    if not telecharge(p["MODELE_DOSSIER"]) and not a.sans_telecharger:
+    if not tout_telecharge(p) and not a.sans_telecharger:
         cmd_telecharger(argparse.Namespace(nom=a.nom, force=False))
     courant = lire_env(env)
     if "docker-compose.spark.yml" not in courant.get("COMPOSE_FILE", "") and not a.force:
@@ -333,6 +362,13 @@ def cmd_utiliser(a) -> None:
     fichier_env = PROJET / ".env.vllm"
     fichier_env.write_text("".join(f"{k}={val}\n" for k, val in extra_env.items()))
     print(f"{a.env} mis à jour pour « {a.nom} »" + (f" ; .env.vllm : {', '.join(extra_env)}" if extra_env else ""))
+    if p.get("IMAGE_CONTEXTE") and not a.sans_telecharger:
+        image = p["VLLM_IMAGE"]
+        existe = subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0
+        if a.reconstruire or not existe:
+            print(f"Construction de l'image {image} (internet requis, plusieurs minutes)…")
+            if subprocess.run(["docker", "build", "-t", image, str(PROJET / p["IMAGE_CONTEXTE"])]).returncode != 0:
+                erreur("la construction de l'image a échoué (voir GUIDE, section 9)")
     if a.sans_redemarrer:
         return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
@@ -355,12 +391,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Modèles du DGX Spark")
     sp = ap.add_subparsers(dest="cmd", required=True)
     c = sp.add_parser("chercher"); c.add_argument("motif", nargs="?"); c.add_argument("--rafraichir", action="store_true"); c.set_defaults(f=cmd_chercher)
+    c = sp.add_parser("nouveautes"); c.add_argument("auteur", nargs="?", default="nvidia"); c.add_argument("--motif"); c.add_argument("--nombre", type=int, default=25); c.set_defaults(f=cmd_nouveautes)
     c = sp.add_parser("ajouter"); c.add_argument("id_hf"); c.add_argument("--nom"); c.add_argument("--dossier")
     c.add_argument("--gpu-util"); c.add_argument("--contexte"); c.add_argument("--sequences"); c.add_argument("--ecraser", action="store_true"); c.set_defaults(f=cmd_ajouter)
     c = sp.add_parser("lister"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_lister)
     c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
     c = sp.add_parser("utiliser"); c.add_argument("nom"); c.add_argument("--env", default=".env")
-    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
+    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.add_argument("--reconstruire", action="store_true"); c.set_defaults(f=cmd_utiliser)
     a = ap.parse_args()
     a.f(a)
 
