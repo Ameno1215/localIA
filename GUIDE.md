@@ -297,7 +297,8 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    ./scripts/02-verifier-spark.sh
    ```
    Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s), car vLLM mesure ~98 tok/s sur GB10. Si une ligne échoue, voir la section 9.
-7. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes :
+7. **Crée tout de suite le compte admin d'Open WebUI** : ouvre `https://<SPARK_HOSTNAME>:8443` et inscris-toi. **Le premier compte créé devient administrateur**, et la page est joignable par tout le réseau, donc fais-le avant d'annoncer le serveur à l'équipe. Ajoute ensuite le MCP des normes (section 6).
+8. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes (le navigateur affiche sinon un avertissement) :
    ```bash
    docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./spark-ca.crt
    ```
@@ -307,7 +308,7 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
 - **Réglages vLLM :** ceux de la recette vérifiée pour le DGX Spark sur [recipes.vllm.ai](https://recipes.vllm.ai/Qwen/Qwen3.6-35B-A3B?hardware=dgx_spark_gb10). Attention FlashInfer, experts NVFP4 via Marlin, décodage spéculatif MTP (`VLLM_SPEC_ARGS`), et 50 % de la mémoire unifiée, car le reste est partagé avec le système et les autres services.
 - **Image vLLM :** réglable avec `VLLM_IMAGE` dans `.env`. Par défaut c'est la même que sur le PC (v0.30.0, disponible en arm64).
 - **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64.
-- **Accès réseau :** seul **Caddy** (HTTPS, port 443) est joignable depuis le réseau. LiteLLM est servi sur `/`, la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Tout le reste n'écoute qu'en local.
+- **Accès réseau :** seul **Caddy** (HTTPS) est joignable depuis le réseau. Port 443 : LiteLLM sur `/` (pour OpenCode) et la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Port 8443 : **Open WebUI**, le chat web, à ouvrir sur `https://<SPARK_HOSTNAME>:8443`. Tout le reste n'écoute qu'en local.
 - **Serveur MCP :** il n'expose que `rechercher_docs` (`OUTILS_CODE=0`). Les outils fichiers et commandes ne doivent jamais être joignables par le réseau.
 
 ### Côté postes (chaque développeur)
@@ -387,7 +388,7 @@ IA locale/
 
 | Port | Service | Accessible depuis |
 |---|---|---|
-| 3000 | Open WebUI | ce PC |
+| 3000 | Open WebUI | ce PC (le Spark : via Caddy, port 8443) |
 | 4000 | LiteLLM (API des modèles et interface d'admin `/ui`) | ce PC (le Spark : via Caddy en 443) |
 | 6333 | Qdrant (tableau de bord : `/dashboard`) | ce PC |
 | 7000 | Panneau web | ce PC |

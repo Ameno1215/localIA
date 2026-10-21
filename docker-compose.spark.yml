@@ -8,7 +8,8 @@
 #  - modèle plus gros (voir .env.spark.example), mêmes noms côté clients (qwen-local, bge-m3)
 #  - vLLM réglé d'après la recette vérifiée GB10 de recipes.vllm.ai (Qwen3.6-35B-A3B, variante NVFP4)
 #  - TEI n'existe pas en ARM64 : embeddings et reranker servis par vLLM (mode pooling), sur GPU
-#  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur /, normes (MCP) sur /mcp avec jeton
+#  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur / (443), normes (MCP) sur /mcp avec jeton,
+#    Open WebUI sur le port 8443
 #  - le serveur MCP n'expose que rechercher_docs (OUTILS_CODE=0) : les agents travaillent sur les postes
 #
 # Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
@@ -87,8 +88,8 @@ services:
     volumes:
       - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
-    ports: ["443:443"]
-    depends_on: [litellm, mcp-docs]
+    ports: ["443:443", "8443:8443"]
+    depends_on: [litellm, mcp-docs, open-webui]
     restart: unless-stopped
 
 volumes:
