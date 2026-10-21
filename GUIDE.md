@@ -390,7 +390,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
 | Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose up -d vllm` |
-| Bolt : `./scripts/modeles.py utiliser bolt-74b-a9b-24gb` échoue pendant la construction de l'image (`download-kernels`) | L'étape veut peut-être un GPU, absent pendant un `docker build` | Lancer l'image à la main avec `--gpus all`, y exécuter `pip install b12x && vllm download-kernels`, puis `docker commit` sous le nom `ia-locale/vllm-bolt:local` |
+| Bolt : `./scripts/modeles.py utiliser bolt-74b-a9b-24gb` échoue à la construction ou à la finalisation de l'image | La construction et la finalisation (`vllm download-kernels`, qui exige un GPU) ont besoin d'internet | Vérifier `docker run --rm --gpus all ubuntu nvidia-smi` et internet, puis relancer avec `--reconstruire` |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---

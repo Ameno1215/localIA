@@ -345,6 +345,22 @@ def ecrire_env(chemin: Path, valeurs: dict[str, str]) -> None:
     chemin.write_text("\n".join(lignes) + "\n")
 
 
+def finaliser_image(image: str, commande: str) -> None:
+    """Étape qui exige le GPU (impossible pendant « docker build ») : lancée dans un conteneur, puis enregistrée dans l'image."""
+    entree, cmd = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Entrypoint}}|{{json .Config.Cmd}}"],
+                                 capture_output=True, text=True, check=True).stdout.strip().split("|", 1)
+    cmd = "[]" if cmd == "null" else cmd
+    nom = "ia-locale-finalisation"
+    subprocess.run(["docker", "rm", "-f", nom], capture_output=True)
+    print(f"Finalisation de l'image (GPU requis) : {commande}")
+    if subprocess.run(["docker", "run", "--gpus", "all", "--name", nom, "--entrypoint", "sh", image, "-c", commande]).returncode != 0:
+        subprocess.run(["docker", "rm", "-f", nom], capture_output=True)
+        erreur("l'étape de finalisation a échoué (internet et GPU requis)")
+    subprocess.run(["docker", "commit", "--change", f"ENTRYPOINT {entree}", "--change", f"CMD {cmd}", nom, image],
+                   capture_output=True, check=True)
+    subprocess.run(["docker", "rm", "-f", nom], capture_output=True)
+
+
 def cmd_utiliser(a) -> None:
     p = lire_profil(a.nom)
     env = PROJET / a.env
@@ -369,6 +385,8 @@ def cmd_utiliser(a) -> None:
             print(f"Construction de l'image {image} (internet requis, plusieurs minutes)…")
             if subprocess.run(["docker", "build", "-t", image, str(PROJET / p["IMAGE_CONTEXTE"])]).returncode != 0:
                 erreur("la construction de l'image a échoué (voir GUIDE, section 9)")
+            if p.get("IMAGE_APRES_BUILD"):
+                finaliser_image(image, p["IMAGE_APRES_BUILD"])
     if a.sans_redemarrer:
         return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
