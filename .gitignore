@@ -1,6 +1,8 @@
 # Secrets : seuls les .env*.example sont versionnés
 .env
 .env.vllm
+.compose.vllm.yml
+cache/
 
 # Poids des modèles (~20 Go, téléchargés par scripts/01-telecharger-modeles.sh)
 models/

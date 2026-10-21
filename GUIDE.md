@@ -340,19 +340,22 @@ Chaque modèle a besoin de ses propres réglages (image vLLM, format d'appels d'
 
 Pour comparer deux modèles : `utiliser` le premier, lance `02-verifier-spark.sh` et note le débit, puis fais pareil avec le second. Les clients n'ont rien à changer, le nom reste `qwen-local`.
 
-Profils fournis :
+Profils fournis (liste revue le 21/10/2026 d'après Hugging Face, classés par mémoire utilisée) :
 
-| Profil | Type | Mémoire min. | À savoir |
+| Profil | Type | Mémoire | À savoir |
 |---|---|---|---|
-| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md de paramètres actifs | 21 Go | Modèle par défaut, rapide |
+| `qwen3.8-flash-next-fp4-local` | MoE, 125 Md au total, 6 Md actifs | ~100 Go | **Pour viser ~90 % de la mémoire.** Qwen3.8 de NVIDIA, validé par NVIDIA sur DGX Spark, perte de précision très faible. Image **communautaire** (`eugr/spark-vllm-b12x`) et conteneur moins isolé exigés par la fiche |
+| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 120 Md, 12 Md actifs | 91 Go | Recette GB10 vérifiée, vLLM v0.31 |
+| `ornith-1.5-122b-nvfp4` | MoE, 122 Md | ~70 Go | **Expérimental** : publié le 20/10, scores annoncés par l'éditeur (excellents en code), aucune validation Spark. Licence MIT |
 | `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | Modèle du playbook NVIDIA pour le Spark, image vLLM dédiée (`qwen38`) |
-| `qwen3.6-27b-nvfp4` | Dense, 27 Md | 27 Go | Dense : génération plus lente qu'un MoE, qualité à comparer |
-| `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE hybride Mamba, 3 Md actifs | 18 Go | Modèle NVIDIA, peu gourmand en mémoire |
-| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 12 Md actifs, 120 Md au total | 91 Go | Paru le 12/10/2026, remplace Nemotron 3 Super. Prend presque toute la mémoire ; vLLM v0.31 (image dédiée) |
-| `bolt-74b-a9b-24gb` | MoE hybride, 9 Md actifs, 74 Md au total | 24 Go | Paru en octobre 2026, conçu pour les agents locaux (outils, terminal). **Expérimental** : image construite sur place, pas de recette vérifiée |
-| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | Même modèle que celui par défaut, en 8 bits : meilleure fidélité, un peu plus lent |
-| `ling-3.0-flash-fp4` | MoE, 124 Md au total | 85 Go | Le plus gros qui tienne à l'aise sur un Spark. Réglages **non vérifiés** pour le Spark |
-| `gemma-4-26b-a4b-nvfp4` | MoE, 4 Md actifs | 16 Go | Demande une image **non officielle** (`eugr/spark-vllm`) : à vérifier avant usage |
+| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | Version 8 bits du modèle par défaut : plus fidèle, un peu plus lente |
+| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md actifs | 21 Go | **Modèle par défaut**, rapide, réglages GB10 vérifiés |
+| `bolt-74b-a9b-24gb` | MoE, 9 Md actifs, 74 Md au total | 24 Go | Conçu pour les agents locaux, **expérimental** : image construite sur place |
+| `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE, 3 Md actifs | 18 Go | Modèle NVIDIA, peu gourmand en mémoire |
+
+Écartés après examen : DeepSeek V4.1 Flash (765 Go), GLM-5.3 (328 Go au minimum) et Kimi K3 (2,8 To) ne tiennent pas sur un Spark ; Mistral Medium 3.5 128B est un modèle dense (environ 90 Go lus à chaque mot, donc très lent) ; Kolibri 1 ne gère que l'allemand et l'anglais ; Step 3.7 Flash (117 Go) ne laisse pas de marge.
+
+**Utiliser ~90 % de la mémoire.** Compte 0.8 de réservation pour vLLM (`VLLM_GPU_UTIL`) plus 0.08 pour les embeddings et le reranker. Un seul modèle de plus de 90 Go à la fois, et rien d'autre de lourd sur le GPU. Pour tester les gros modèles dans l'ordre de prudence : `nemotron-3.5-super…` (vérifié), `qwen3.8-flash-next…` (validé par NVIDIA mais image communautaire), puis `ornith…` (le plus récent). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
 
 Où trouver d'autres modèles :
 - **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.

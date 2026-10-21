@@ -374,6 +374,17 @@ def cmd_utiliser(a) -> None:
     if courant.get("VLLM_LORA_ARGS"):
         print("⚠ VLLM_LORA_ARGS est rempli : une LoRA entraînée sur un autre modèle ne fonctionne pas avec celui-ci. Vide-le ou réentraîne.")
     ecrire_env(env, {k: p.get(k, "") for k in CLES_ENV})
+    # Réglages Docker propres au modèle (mémoire partagée, limites, sécurité) : fichier généré, retiré au changement de modèle
+    extra_compose = PROJET / ".compose.vllm.yml"
+    fichiers = [f for f in courant.get("COMPOSE_FILE", "").split(":") if f and f != extra_compose.name]
+    if p.get("COMPOSE_EXTRA"):
+        extra_compose.write_text(json.dumps({"services": {"vllm": json.loads(p["COMPOSE_EXTRA"])}}, indent=2) + "\n")
+        fichiers.append(extra_compose.name)
+        for v in json.loads(p["COMPOSE_EXTRA"]).get("volumes", []):
+            (PROJET / v.split(":")[0]).mkdir(parents=True, exist_ok=True)
+    else:
+        extra_compose.unlink(missing_ok=True)
+    ecrire_env(env, {"COMPOSE_FILE": ":".join(fichiers)})
     extra_env = {k[4:]: val for k, val in p.items() if k.startswith("ENV_")}
     fichier_env = PROJET / ".env.vllm"
     fichier_env.write_text("".join(f"{k}={val}\n" for k, val in extra_env.items()))
