@@ -102,7 +102,8 @@ def cmd_chercher(a) -> None:
         vram = f"{r['vram_min']} Go" if r["vram_min"] else "?"
         print(f"{r['id']:58} {r['statut']:9} {r['params'] or '?':>6} {vram:>11}  {r['archi'] or ''} {r['precision'] or ''}")
     print(f"\n{len(lignes)} modèle(s). Pour en ajouter un :  ./scripts/modeles.py ajouter <modèle>")
-    print("Le Spark a 128 Go de mémoire partagée : visez « Mémoire min » sous ~60 Go (le reste sert au système et aux autres services).")
+    print("Le Spark a 128 Go de mémoire partagée avec le système et les autres services : jusqu'à ~85 Go de « Mémoire min » reste réaliste,")
+    print("au-delà il y a trop peu de marge. Plus gros n'est pas plus rapide : la vitesse dépend surtout des paramètres actifs (MoE) et de la précision.")
 
 
 # ----------------------------------------------------------------------------- profils

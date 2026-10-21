@@ -349,6 +349,8 @@ Profils fournis :
 | `qwen3.6-27b-nvfp4` | Dense, 27 Md | 27 Go | Dense : génération plus lente qu'un MoE, qualité à comparer |
 | `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE hybride Mamba, 3 Md actifs | 18 Go | Modèle NVIDIA, peu gourmand en mémoire |
 | `nemotron-3-super-120b-a12b-nvfp4` | MoE, 12 Md actifs | 75 Go | Occupe l'essentiel de la mémoire. Réglages **non vérifiés** pour le Spark : à tester avec précaution |
+| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | Même modèle que celui par défaut, en 8 bits : meilleure fidélité, un peu plus lent |
+| `ling-3.0-flash-fp4` | MoE, 124 Md au total | 85 Go | Le plus gros qui tienne à l'aise sur un Spark. Réglages **non vérifiés** pour le Spark |
 | `gemma-4-26b-a4b-nvfp4` | MoE, 4 Md actifs | 16 Go | Demande une image **non officielle** (`eugr/spark-vllm`) : à vérifier avant usage |
 
 Où trouver d'autres modèles :
@@ -356,7 +358,10 @@ Où trouver d'autres modèles :
 - **Hugging Face** : les modèles NVIDIA au format NVFP4 sont dans l'organisation [nvidia](https://huggingface.co/nvidia). Un modèle qui n'a pas de recette GB10 n'est pas refusé, mais ses réglages sont à trouver à la main.
 - **NVIDIA** : les [playbooks du Spark](https://build.nvidia.com/spark) et le forum développeurs annoncent les modèles validés.
 
-Règles utiles : la mémoire de 128 Go est partagée avec le système, donc vise une « mémoire min. » sous 60 Go. Un modèle MoE (peu de paramètres actifs) génère bien plus vite qu'un modèle dense de même taille, car la bande passante mémoire du Spark est le facteur limitant.
+Règles utiles :
+- **Jusqu'où monter :** les 128 Go sont partagés avec le système, les services Docker et les embeddings (environ 10 Go). Un modèle jusqu'à ~85 Go de « mémoire min. » est réaliste. Au-delà (DeepSeek V4, 170 Go) il faut deux Spark.
+- **Plus gros n'est pas plus rapide.** À chaque mot généré, le Spark relit les paramètres actifs en mémoire, et sa bande passante (environ 270 Go/s, ordre de grandeur) limite la vitesse. Un MoE à 3 Md actifs génère donc bien plus vite qu'un modèle de 120 Md à 12 Md actifs, et un modèle dense de 27 Md est encore plus lent.
+- **Ce que la mémoire en plus apporte :** soit un modèle plus capable (120 Md en 4 bits), soit le même modèle en meilleure précision (8 bits au lieu de 4). Compare avec `02-verifier-spark.sh` et sur tes vraies tâches, pas seulement sur la taille.
 
 Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA entraînée sur un modèle ne fonctionne pas avec un autre : réentraîne-la après un changement.
 
