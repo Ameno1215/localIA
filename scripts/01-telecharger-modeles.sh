@@ -19,8 +19,9 @@ hf download BAAI/bge-reranker-v2-m3 --local-dir models/bge-reranker-v2-m3 --excl
 if [ "${1:-}" = "--spark" ]; then
   # Spark : embeddings servis par vLLM -> poids PyTorch (pas la version ONNX)
   hf download BAAI/bge-m3 --local-dir models/bge-m3 --exclude 'onnx/*' --exclude 'imgs/*' --exclude '*.jpg'
-  # Modèle principal : profil NVIDIA pour DGX Spark (MoE 35B, 3B actifs, NVFP4), ~23 Go
-  hf download nvidia/Qwen3.6-35B-A3B-NVFP4 --local-dir models/Qwen3.6-35B-A3B-NVFP4
+  # Modèle principal : profil par défaut (MoE 35B, 3B actifs, NVFP4, ~23 Go). Autres modèles :
+  # ./scripts/modeles.py lister | chercher | ajouter | utiliser
+  python3 scripts/modeles.py telecharger qwen3.6-35b-a3b-nvfp4
 else
   # PC : embeddings sur CPU via TEI -> version ONNX (~2.3 Go)
   hf download BAAI/bge-m3 --local-dir models/bge-m3 --exclude 'pytorch_model.bin' --exclude 'imgs/*' --exclude '*.jpg' --exclude '*.pt'

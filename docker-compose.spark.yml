@@ -6,7 +6,7 @@
 #
 # Différences avec le PC :
 #  - modèle plus gros (voir .env.spark.example), mêmes noms côté clients (qwen-local, bge-m3)
-#  - vLLM réglé d'après la recette vérifiée GB10 de recipes.vllm.ai (Qwen3.6-35B-A3B, variante NVFP4)
+#  - vLLM réglé d'après les recettes vérifiées GB10 de recipes.vllm.ai, un profil par modèle (scripts/modeles.py)
 #  - TEI n'existe pas en ARM64 : embeddings et reranker servis par vLLM (mode pooling), sur GPU
 #  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur / (443), normes (MCP) sur /mcp avec jeton,
 #    Open WebUI sur le port 8443
@@ -15,7 +15,7 @@
 # Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
 
 x-vllm-pooling: &vllm-pooling
-  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+  image: ${VLLM_POOLING_IMAGE:-vllm/vllm-openai:v0.30.0}
   entrypoint: ["vllm", "serve"]
   environment:
     HF_HUB_OFFLINE: "1"
@@ -28,8 +28,8 @@ x-vllm-pooling: &vllm-pooling
   restart: unless-stopped
 
 services:
-  # Recette GB10 : FlashInfer pour l'attention, Marlin pour les experts NVFP4, MTP (3 tokens devinés
-  # d'avance) pour accélérer la génération. Mesuré par vLLM : ~98 tok/s en génération, 1 requête.
+  # Les options propres au modèle (parsers, backends, MTP…) viennent du profil actif :
+  # config/modeles-spark/<nom>.env, copié dans .env par  ./scripts/modeles.py utiliser <nom>
   vllm:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
     command: >
@@ -39,15 +39,14 @@ services:
       --max-model-len ${VLLM_MAX_MODEL_LEN}
       --gpu-memory-utilization ${VLLM_GPU_UTIL}
       --max-num-seqs ${VLLM_MAX_SEQS}
-      --max-num-batched-tokens 8192
-      --kv-cache-dtype fp8
-      --attention-backend flashinfer
-      --moe-backend marlin
-      --enable-chunked-prefill --async-scheduling --enable-prefix-caching
       --enable-auto-tool-choice --tool-call-parser ${VLLM_TOOL_PARSER:-qwen3_coder}
       ${VLLM_SPEC_ARGS:-}
       ${VLLM_EXTRA_ARGS:-}
       ${VLLM_LORA_ARGS:-}
+    # Variables d'environnement propres au modèle (écrites par « utiliser »)
+    env_file:
+      - path: .env.vllm
+        required: false
     environment:
       VLLM_USE_RUST_FRONTEND: "1"
     ports: !override

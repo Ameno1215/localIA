@@ -86,6 +86,8 @@ Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` p
 
 L'ancien modèle reste dans `models/` (13 Go). Tu peux supprimer ses deux dossiers si tu as besoin de place.
 
+**Sur le Spark**, ne règle pas ces variables à la main : utilise les profils de modèles (section 8, « Tester d'autres modèles »).
+
 ---
 
 ## 3. Démarrer et arrêter
@@ -324,6 +326,40 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
 
 C'est la seule différence avec le PC de test : `opencode` s'utilise exactement de la même façon.
 
+### Tester d'autres modèles
+
+Chaque modèle a besoin de ses propres réglages (image vLLM, format d'appels d'outils, options). Ils sont rangés dans un **profil** par modèle, dans `config/modeles-spark/`. Le script `scripts/modeles.py` lit les recettes officielles de [recipes.vllm.ai](https://recipes.vllm.ai) (filtre « DGX Spark ») pour les créer, donc rien n'est à recopier à la main.
+
+```bash
+./scripts/modeles.py lister                      # profils connus, téléchargés ou non, modèle actif
+./scripts/modeles.py chercher nvidia             # modèles dont la recette est vérifiée pour le Spark (filtre facultatif)
+./scripts/modeles.py ajouter nvidia/Qwen3.8-27B-NVFP4   # crée le profil d'un modèle de la liste
+./scripts/modeles.py utiliser qwen3.8-27b-nvfp4  # télécharge si besoin, met .env à jour, redémarre vLLM
+./scripts/02-verifier-spark.sh                   # teste chat, outils, débit
+```
+
+Pour comparer deux modèles : `utiliser` le premier, lance `02-verifier-spark.sh` et note le débit, puis fais pareil avec le second. Les clients n'ont rien à changer, le nom reste `qwen-local`.
+
+Profils fournis :
+
+| Profil | Type | Mémoire min. | À savoir |
+|---|---|---|---|
+| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md de paramètres actifs | 21 Go | Modèle par défaut, rapide |
+| `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | Modèle du playbook NVIDIA pour le Spark, image vLLM dédiée (`qwen38`) |
+| `qwen3.6-27b-nvfp4` | Dense, 27 Md | 27 Go | Dense : génération plus lente qu'un MoE, qualité à comparer |
+| `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE hybride Mamba, 3 Md actifs | 18 Go | Modèle NVIDIA, peu gourmand en mémoire |
+| `nemotron-3-super-120b-a12b-nvfp4` | MoE, 12 Md actifs | 75 Go | Occupe l'essentiel de la mémoire. Réglages **non vérifiés** pour le Spark : à tester avec précaution |
+| `gemma-4-26b-a4b-nvfp4` | MoE, 4 Md actifs | 16 Go | Demande une image **non officielle** (`eugr/spark-vllm`) : à vérifier avant usage |
+
+Où trouver d'autres modèles :
+- **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.
+- **Hugging Face** : les modèles NVIDIA au format NVFP4 sont dans l'organisation [nvidia](https://huggingface.co/nvidia). Un modèle qui n'a pas de recette GB10 n'est pas refusé, mais ses réglages sont à trouver à la main.
+- **NVIDIA** : les [playbooks du Spark](https://build.nvidia.com/spark) et le forum développeurs annoncent les modèles validés.
+
+Règles utiles : la mémoire de 128 Go est partagée avec le système, donc vise une « mémoire min. » sous 60 Go. Un modèle MoE (peu de paramètres actifs) génère bien plus vite qu'un modèle dense de même taille, car la bande passante mémoire du Spark est le facteur limitant.
+
+Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA entraînée sur un modèle ne fonctionne pas avec un autre : réentraîne-la après un changement.
+
 ### Plus tard
 
 - **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
@@ -365,6 +401,7 @@ IA locale/
 ├── .env.spark.example          réglages du Spark
 ├── config/
 │   ├── litellm.yaml            modèles exposés aux clients
+│   ├── modeles-spark/          un profil par modèle testable sur le Spark
 │   └── Caddyfile.spark         proxy HTTPS du Spark
 ├── models/                     poids des modèles (hors git)
 ├── docs-internes/              tes normes et documents (indexés pour la recherche)
@@ -379,6 +416,7 @@ IA locale/
     ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
     ├── 01-telecharger-modeles.sh   poids des modèles (--spark pour le Spark)
     ├── 02-verifier-spark.sh    vérifie que chat, outils, embeddings et reranker répondent
+    ├── modeles.py              modèles du Spark : chercher, ajouter, utiliser (profils)
     ├── creer-cle-utilisateur.sh    clé LiteLLM pour une personne
     ├── installer-opencode.sh   OpenCode sur un poste
     └── panneau.sh              lance le panneau web
