@@ -9,6 +9,12 @@ Elle tourne aujourd'hui sur un PC de test (RTX 8 Go) et est prête à passer sur
 
 📖 **Toute la documentation est dans [GUIDE.md](GUIDE.md)** : fonctionnement, utilisation, passage au Spark, dépannage.
 
+| Fichier | Pour quoi faire |
+|---|---|
+| [GUIDE.md](GUIDE.md) | Comprendre et utiliser la plateforme |
+| [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) | **Tester sur le DGX Spark**, pas à pas (branche `spark`) |
+| [AUDIT-NVIDIA.md](AUDIT-NVIDIA.md) | Écarts avec les tutoriels et recettes officiels NVIDIA, et corrections faites |
+
 ## Démarrage rapide
 
 ```bash
@@ -43,7 +49,7 @@ Installe OpenCode et le configure. Le script demande la clé. Le détail est dan
 ./scripts/00-prerequis.sh
 ```
 
-Installe le driver NVIDIA, Docker compose, le NVIDIA Container Toolkit et Python. Il demande sudo, et il faut redémarrer ensuite.
+Sur le PC de test : installe le driver NVIDIA, Docker compose, le NVIDIA Container Toolkit et Python (sudo, redémarrage ensuite). Sur le DGX Spark, le pilote et le toolkit sont déjà fournis par DGX OS et ne sont pas touchés.
 
 ```bash
 ./scripts/01-telecharger-modeles.sh
@@ -58,7 +64,7 @@ docker compose up -d
 
 Crée la configuration à partir du modèle (pense à changer les secrets), puis démarre la stack.
 
-## État au 12/10/2026
+## État (PC de test au 12/10/2026 ; configuration Spark au 22/10/2026)
 
 | Brique | État |
 |---|---|
@@ -69,4 +75,4 @@ Crée la configuration à partir du modèle (pense à changer les secrets), puis
 | Panneau web de contrôle | ✅ testé |
 | Open WebUI | ⚠️ prêt, compte admin à créer |
 | Fine-tuning LoRA `normes` | ⏳ scripts prêts, pas encore lancé |
-| Configuration DGX Spark | ⏳ fichiers prêts, non testés |
+| Configuration DGX Spark (branche `spark`) | ⏳ prête et vérifiée sur PC (rendu Docker, scripts), **jamais lancée sur un Spark** : voir [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) |

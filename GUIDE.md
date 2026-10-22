@@ -275,19 +275,21 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 ## 8. Passage au DGX Spark
 
 > Les fichiers sont prêts, mais **pas encore testés sur le Spark**. Les points marqués ⚠ sont à vérifier sur place.
+>
+> **Pas à pas complet, de la copie du projet à la vérification, avec les pannes probables : [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md).** Les étapes ci-dessous en sont le résumé.
 
 ### Côté serveur (sur le Spark)
 
-1. **Copie le projet** sur le Spark : tout le dossier, sauf `models/`, `.venv*` et `.env`.
+1. **Copie le projet** sur le Spark (`git bundle`, voir le pas-à-pas), puis copie à part les PDF de `docs-internes/` : ils ne sont pas dans git.
 2. **Télécharge les modèles du Spark** (~30 Go), avec internet ou depuis un disque de transfert :
    ```bash
    ./scripts/01-telecharger-modeles.sh --spark
    ```
 3. **Prépare la configuration :**
    ```bash
-   cp .env.spark.example .env
+   ./scripts/preparer-env-spark.sh spark1.lan
    ```
-   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`. Ce fichier contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
+   Le script génère les secrets (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
 4. **Démarre la stack :**
    ```bash
    docker compose up -d
@@ -407,6 +409,8 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 IA locale/
 ├── GUIDE.md                    ce guide
 ├── README.md                   démarrage rapide
+├── SPARK-PREMIER-DEMARRAGE.md  pas à pas du premier démarrage sur le Spark
+├── AUDIT-NVIDIA.md             écarts avec les tutoriels et recettes NVIDIA
 ├── docker-compose.yml          la stack (PC de test)
 ├── docker-compose.spark.yml    surcharge pour le DGX Spark
 ├── .env / .env.example         réglages et secrets du PC (.env n'est jamais partagé)
@@ -428,6 +432,8 @@ IA locale/
     ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
     ├── 01-telecharger-modeles.sh   poids des modèles (--spark pour le Spark)
     ├── 02-verifier-spark.sh    vérifie que chat, outils, embeddings et reranker répondent
+    ├── preparer-env-spark.sh   crée le .env du Spark (secrets générés)
+    ├── diagnostic-spark.sh     rassemble l'état du Spark dans un fichier à transmettre
     ├── modeles.py              modèles du Spark : chercher, ajouter, utiliser (profils)
     ├── creer-cle-utilisateur.sh    clé LiteLLM pour une personne
     ├── installer-opencode.sh   OpenCode sur un poste
