@@ -19,6 +19,11 @@ if [ "${1:-}" = "--spark" ] && [ -z "$WS_DIR" ]; then
 fi
 MODELS="${WS_DIR:-.}/models"
 mkdir -p "$MODELS"
+if [ ! -w "$MODELS" ] || find "$MODELS" -mindepth 1 -maxdepth 1 ! -writable 2>/dev/null | grep -q .; then
+  echo "$MODELS (ou un de ses sous-dossiers) n'est pas modifiable par $USER (créé avec sudo ?)."
+  echo "Corrige : sudo chown -R \$USER ${WS_DIR:-$MODELS} — puis relance sans sudo."
+  exit 1
+fi
 echo "==> Modèles dans $(realpath "$MODELS")"
 # hf CLI : celui du .venv s'il existe, sinon via un conteneur Python jetable
 if [ -x .venv/bin/hf ]; then

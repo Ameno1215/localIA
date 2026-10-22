@@ -132,7 +132,7 @@ docker compose exec mcp-docs python ingest.py       # indexe les PDF de docs-int
 | Embeddings ou reranker en erreur | `docker compose logs --tail 80 tei-embed tei-rerank` (ils tournent sous vLLM en mode « pooling », non validé sur Spark) |
 | `[ECHEC] appel d'outil` | Le parser d'outils ne correspond pas au modèle : `VLLM_TOOL_PARSER` dans `.env` |
 | `Crée d'abord le .env du Spark` alors que le `.env` existe, ou `grep: .env: Permission denied` | Le `.env` appartient à `root` (script lancé avec `sudo`). `sudo chown $USER .env` dans le dossier du projet, puis relance les scripts **sans** sudo |
-| `Permission denied` en écrivant dans le dossier des données | Un sous-dossier a été créé par Docker au nom de `root`. `sudo chown -R $USER /home/data/ws/models` (et le dossier concerné), ou relance `preparer-env-spark.sh` sur un `.env` supprimé |
+| `Permission denied` en écrivant dans le dossier des données (ex. `/work/models/bge-reranker-v2-m3`) | Le dossier a été créé au nom de `root` (`preparer-env-spark.sh` lancé avec sudo, ou Docker). `sudo chown -R $USER /home/data/ws` règle tout d'un coup. `sudo chown -R $USER /home/data/ws/models` (et le dossier concerné), ou relance `preparer-env-spark.sh` sur un `.env` supprimé |
 | Autre | Section 9 du GUIDE |
 
 **Pour me transmettre un problème :**
