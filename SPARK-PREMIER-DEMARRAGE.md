@@ -77,14 +77,36 @@ Attendu : **5 lignes `[OK]`** (chat, appel d'outil, débit, embeddings, reranker
 
 Pour le débit, NVIDIA mesure **124 tok/s** pour ce modèle sur Spark (une requête de code). Le script en mesure une aussi, avec le préremplissage compté : un peu moins est normal. Moins de la moitié, ou un texte incohérent : voir le tableau ci-dessous.
 
-## 7. Documents et comptes
+## 7. Tester Open WebUI et OpenCode (avec le modèle par défaut)
 
+Une fois l'étape 6 réussie (5 lignes `[OK]`), tout est prêt pour les deux outils, avec Qwen3.6-35B. Ce n'est pas un petit modèle (35 Md de paramètres), mais il n'en active que 3 Md par mot, d'où sa vitesse.
+
+**Open WebUI (le chat)** : depuis un navigateur du réseau.
+1. Ouvre `https://<SPARK_HOSTNAME>:8443`. Le navigateur signale un certificat inconnu (le certificat est interne) : accepte-le pour ce test.
+2. **Crée tout de suite le compte administrateur** : le premier compte créé devient admin, et la page est joignable par tout le réseau.
+3. Choisis le modèle **`qwen-local`**. Ignore `normes` : c'est le modèle entraîné sur les normes, qui n'existe pas encore (erreur si tu le choisis).
+4. Pose une question. Pour la recherche dans les normes, copie d'abord les PDF (étape 1) et lance l'indexation ci-dessous. L'outil de recherche est déclaré d'office ; sinon, voir la section 6 du GUIDE.
+
+**OpenCode (l'agent de code)** : depuis le poste d'un développeur, pas sur le Spark.
+1. **Sur le Spark**, crée une clé personnelle. Elle ne s'affiche qu'une fois : copie-la.
+   ```bash
+   ./scripts/creer-cle-utilisateur.sh prenom.nom
+   ```
+2. **Sur le Spark**, récupère le certificat HTTPS interne, à copier sur le poste :
+   ```bash
+   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./spark-ca.crt
+   ```
+3. **Sur le poste** (Node.js 20 ou plus, une copie du dépôt, et un moyen de joindre le nom du Spark) :
+   ```bash
+   ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 131072 --mcp https://spark1.lan/mcp --jeton-mcp <MCP_TOKEN> --ca ./spark-ca.crt
+   ```
+   Le script demande la clé de l'étape 1 et vérifie que le serveur répond. `MCP_TOKEN` se lit dans le `.env` du Spark.
+4. Ouvre un nouveau terminal, puis `cd ton-projet` et `opencode`.
+
+**Indexer les normes et finir :**
 ```bash
 docker compose exec mcp-docs python ingest.py       # indexe les PDF de docs-internes/
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./spark-ca.crt
 ```
-- Ouvre `https://<SPARK_HOSTNAME>:8443` et **crée tout de suite le compte administrateur d'Open WebUI** : le premier compte créé devient admin, et la page est joignable par tout le réseau.
-- Pour chaque développeur : `./scripts/creer-cle-utilisateur.sh prenom.nom`, puis l'installation du poste (GUIDE, section 8, « Côté postes »).
 - Panneau de contrôle (écoute seulement en local sur le Spark) : lance `./scripts/panneau.sh` sur le Spark, puis depuis ton poste `ssh -L 7000:localhost:7000 utilisateur@spark1.lan` et ouvre http://localhost:7000.
 
 ## 8. Si quelque chose ne va pas

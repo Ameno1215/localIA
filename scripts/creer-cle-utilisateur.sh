@@ -3,7 +3,9 @@
 # Chaque personne utilise SA clé dans Open WebUI / OpenCode -> suivi et quotas par personne.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-source .env
+# Ne PAS faire « source .env » : le .env contient des lignes (options vLLM) que bash ne sait pas lire
+LITELLM_MASTER_KEY="$(grep -E '^LITELLM_MASTER_KEY=' .env | cut -d= -f2-)"
+[ -n "$LITELLM_MASTER_KEY" ] || { echo "LITELLM_MASTER_KEY introuvable dans .env"; exit 1; }
 UTILISATEUR="${1:?usage: $0 <identifiant>}"
 curl -s http://localhost:4000/key/generate \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H "Content-Type: application/json" \
