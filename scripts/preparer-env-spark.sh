@@ -34,3 +34,4 @@ done
 echo "Dossier des données : $(realpath "$WS")"
 echo "$DEST créé (droits 600) : secrets générés, serveur « $HOTE »."
 echo "Le jeton d'équipe MCP_TOKEN est à donner aux développeurs : grep MCP_TOKEN $DEST"
+echo "Étape suivante : ./scripts/01-telecharger-modeles.sh --spark"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Télécharge les poids dans <WS_DIR>/models (./models si WS_DIR n'est pas défini dans .env) — à faire avec internet.
 #   ./scripts/01-telecharger-modeles.sh           # PC de test (~25 Go)
-#   ./scripts/01-telecharger-modeles.sh --spark   # DGX Spark (~30 Go)
+#   ./scripts/01-telecharger-modeles.sh --spark   # DGX Spark (~82 Go)
 # Ensuite tout tourne hors ligne (HF_HUB_OFFLINE=1 dans les conteneurs).
 # Pour le réseau fermé : copie le dossier models sur disque externe, avec sha256sum.txt pour vérifier.
 set -euo pipefail
@@ -31,9 +31,9 @@ hf download BAAI/bge-reranker-v2-m3 --local-dir "$DEST"/bge-reranker-v2-m3 --exc
 if [ "${1:-}" = "--spark" ]; then
   # Spark : embeddings servis par vLLM -> poids PyTorch (pas la version ONNX)
   hf download BAAI/bge-m3 --local-dir "$DEST"/bge-m3 --exclude 'onnx/*' --exclude 'imgs/*' --exclude '*.jpg'
-  # Modèle principal : profil par défaut (MoE 35B, 3B actifs, NVFP4, ~23 Go). Autres modèles :
-  # ./scripts/modeles.py lister | chercher | ajouter | utiliser
-  python3 scripts/modeles.py telecharger qwen3.6-35b-a3b-nvfp4
+  # Modèle principal : profil par défaut, Nemotron 3.5 Super VL (MoE 120B, 12B actifs, NVFP4, 75 Go + brouillon 1,3 Go).
+  # Autres modèles : ./scripts/modeles.py lister | chercher | ajouter | utiliser
+  python3 scripts/modeles.py telecharger nemotron-3.5-super-vl-120b-a12b-nvfp4
 else
   # PC : embeddings sur CPU via TEI -> version ONNX (~2.3 Go)
   hf download BAAI/bge-m3 --local-dir "$DEST"/bge-m3 --exclude 'pytorch_model.bin' --exclude 'imgs/*' --exclude '*.jpg' --exclude '*.pt'

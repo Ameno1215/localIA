@@ -67,7 +67,7 @@ L'agent de code tourne **sur le poste du développeur** : il lit et modifie tes 
 | `bge-m3` | Modèle d'embeddings pour la recherche dans les documents. Il ne sait pas discuter. | TEI, CPU |
 | reranker `bge-reranker-v2-m3` | Trie les passages trouvés par pertinence. Il n'est pas exposé aux clients. | TEI, CPU |
 
-Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` peut changer (un 4B aujourd'hui, un 35B sur le Spark) sans rien modifier chez les utilisateurs.
+Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` peut changer (un Qwen 4B sur le PC de test, Nemotron 3.5 Super 120B sur le Spark) sans rien modifier chez les utilisateurs. Le nom `qwen-local` est historique : il ne désigne pas forcément un modèle Qwen.
 
 ### Changer de modèle
 
@@ -280,13 +280,13 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 
 ### Côté serveur (sur le Spark)
 
-1. **Clone le projet** sur le Spark (`git clone -b spark …`, voir le pas-à-pas), puis copie à part les PDF des normes dans le dossier de données (`WS_DIR/docs-internes/`) : ils ne sont pas dans git.
+1. **Clone le projet** sur le Spark dans `/home/data/ws/ia-locale` (`git clone -b spark …`, voir le pas-à-pas ; Docker est déjà installé et configuré, `./scripts/00-prerequis.sh` ne fait que vérifier), puis copie à part les PDF des normes dans le dossier de données (`WS_DIR/docs-internes/`) : ils ne sont pas dans git.
 2. **Prépare la configuration :**
    ```bash
    ./scripts/preparer-env-spark.sh spark1.lan /home/data/ws
    ```
    Le script génère les secrets, crée les dossiers de données (`WS_DIR`, par exemple `/home/data/ws`) (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
-3. **Télécharge les modèles du Spark** (~30 Go, dans `WS_DIR/models`), avec internet ou depuis un disque de transfert :
+3. **Télécharge les modèles du Spark** (~82 Go, dans `WS_DIR/models`), avec internet ou depuis un disque de transfert :
    ```bash
    ./scripts/01-telecharger-modeles.sh --spark
    ```
@@ -295,12 +295,12 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    docker compose up -d
    ```
    Le panneau web (`./scripts/panneau.sh`) écoute sur `127.0.0.1:7000` du Spark. Depuis ton poste : `ssh -L 7000:localhost:7000 <utilisateur>@<spark>`, puis http://localhost:7000.
-5. **Attends que vLLM ait chargé le modèle de 35B.** Ça prend plusieurs minutes, et la commande `docker compose logs -f vllm` montre la progression.
+5. **Attends que vLLM ait chargé le modèle de 120B (75 Go).** Ça prend 15 à 30 minutes la première fois, et la commande `docker compose logs -f vllm` montre la progression.
 6. **Vérifie que tout répond** : chat, appels d'outils, débit, embeddings et reranker.
    ```bash
    ./scripts/02-verifier-spark.sh
    ```
-   Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s) : NVIDIA mesure 124 tok/s pour ce modèle sur Spark, pour une seule requête de code (le script en mesure une aussi, avec le préremplissage compté, donc un peu moins). Si une ligne échoue, voir la section 9.
+   Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s) : NVIDIA mesure 51 tok/s pour ce modèle sur Spark, pour une seule requête de code (le script en mesure une aussi, avec le préremplissage compté, donc un peu moins). Si une ligne échoue, voir la section 9.
 7. **Crée tout de suite le compte admin d'Open WebUI** : ouvre `https://<SPARK_HOSTNAME>:8443` et inscris-toi. **Le premier compte créé devient administrateur**, et la page est joignable par tout le réseau, donc fais-le avant d'annoncer le serveur à l'équipe. Ajoute ensuite le MCP des normes (section 6).
 8. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes (le navigateur affiche sinon un avertissement) :
    ```bash
@@ -308,9 +308,9 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    ```
 
 Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
-- **Modèle :** `Qwen3.6-35B-A3B` NVFP4 (recette NVIDIA validée), avec 262 144 jetons de contexte et 8 requêtes en parallèle.
-- **Réglages vLLM :** ceux de la **recette officielle NVIDIA** du modèle (dépôt [local-ai-inference-recipes](https://github.com/NVIDIA/local-ai-inference-recipes), validée le 19/10/2026). Un profil par modèle dans `config/modeles-spark/`. Le conteneur reçoit aussi les réglages que NVIDIA met dans toutes ses recettes : mémoire partagée de 16 Go, mémoire verrouillée illimitée, caches de compilation conservés dans `cache/` (démarrages suivants plus rapides).
-- **Image vLLM :** conteneur NGC de NVIDIA (`nvcr.io/nvidia/vllm:26.10.pre1-py3`, public, ARM64) pour le modèle par défaut. Réglable avec `VLLM_IMAGE` ; chaque profil indique l'image de sa recette. Le panneau web affiche la mémoire unifiée du Spark via la jauge RAM.
+- **Modèle :** `Nemotron 3.5 Super VL 120B-A12B` NVFP4 (NVIDIA, sorti le 15/10/2026), le plus gros Nemotron 3.5 qui tient sur un Spark 128 Go. Texte et images, 262 144 jetons de contexte, 8 requêtes en parallèle. Le Spark n'a pas à ressembler au PC de test : il prend le meilleur modèle qu'il peut porter.
+- **Réglages vLLM :** ceux de la **recette officielle NVIDIA** du modèle (dépôt [local-ai-inference-recipes](https://github.com/NVIDIA/local-ai-inference-recipes), validée le 15/10/2026 sur un Spark avec le pilote 580 et CUDA 13.0). Un profil par modèle dans `config/modeles-spark/`. Le conteneur reçoit aussi les réglages que NVIDIA met dans toutes ses recettes : mémoire partagée de 16 Go, mémoire verrouillée illimitée, caches de compilation conservés dans `WS_DIR/cache/` (démarrages suivants plus rapides).
+- **Image vLLM :** `eugr/spark-vllm:nightly-20261015` (image communautaire ARM64 que cite la recette NVIDIA, tag figé) pour le modèle par défaut. Réglable avec `VLLM_IMAGE` ; chaque profil indique l'image de sa recette. Le panneau web affiche la mémoire unifiée du Spark via la jauge RAM.
 - **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64.
 - **Accès réseau :** seul **Caddy** (HTTPS) est joignable depuis le réseau. Port 443 : LiteLLM sur `/` (pour OpenCode) et la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Port 8443 : **Open WebUI**, le chat web, à ouvrir sur `https://<SPARK_HOSTNAME>:8443`. Tout le reste n'écoute qu'en local.
 - **Serveur MCP :** il n'expose que `rechercher_docs` (`OUTILS_CODE=0`). Les outils fichiers et commandes ne doivent jamais être joignables par le réseau.
@@ -323,7 +323,7 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
    ```
 2. **Lance l'installation sur son poste**, avec l'adresse du Spark :
    ```bash
-   ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 131072 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
+   ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 262144 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
    ```
 
 C'est la seule différence avec le PC de test : `opencode` s'utilise exactement de la même façon.
@@ -347,19 +347,19 @@ Profils fournis (liste revue le 21/10/2026 d'après Hugging Face, alignée sur l
 | Profil | Type | Mémoire | Débit | À savoir |
 |---|---|---|---|---|
 | `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE, 3 Md actifs | 18 Go | 144 tok/s | Le plus rapide. Image communautaire figée, brouillon DSpark |
-| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md actifs | 21 Go | 124 tok/s | **Modèle par défaut.** Conteneur NGC de NVIDIA |
+| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md actifs | 21 Go | 124 tok/s | Ancien modèle par défaut : rapide, repli si Nemotron Super pose problème. Conteneur NGC de NVIDIA |
 | `bolt-74b-a9b-24gb` | MoE hybride, 9 Md actifs, 74 Md au total | 24 Go | 89 tok/s | Conçu pour les agents locaux. Image communautaire figée, brouillon LiLiCorr |
-| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | non mesuré | Version 8 bits du modèle par défaut : plus fidèle, un peu plus lente |
+| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | non mesuré | Version 8 bits de Qwen3.6 : plus fidèle, un peu plus lente |
 | `ornith-1.5-122b-nvfp4` | MoE, 122 Md | ~70 Go | non mesuré | **Expérimental** : publié le 20/10, scores annoncés par l'éditeur, aucune validation Spark. Licence MIT |
-| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 120 Md, 12 Md actifs | 75 Go | 51 tok/s | Image communautaire figée, brouillon LiLiCorr. Prend l'essentiel de la mémoire |
+| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 120 Md, 12 Md actifs | 75 Go | 51 tok/s | **Modèle par défaut.** Le plus capable. Texte et images. Image communautaire figée, brouillon LiLiCorr. Prend l'essentiel de la mémoire |
 | `qwen3.8-flash-next-fp4-local` | MoE, 125 Md au total, 6 Md actifs | ~100 Go | 38 tok/s | **Pour viser ~90 % de la mémoire.** Image communautaire figée et conteneur moins isolé exigés par la recette |
 | `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | 37 tok/s | Modèle recommandé par le playbook NVIDIA vLLM. Conteneur NGC, brouillon DFlash |
 
-**Remplir la mémoire ne rend pas plus rapide** : les modèles de 75 à 100 Go sont environ 3 fois plus lents que le modèle par défaut. À plusieurs utilisateurs, le débit par personne baisse encore.
+**Remplir la mémoire ne rend pas plus rapide** : les modèles de 75 à 100 Go, dont le modèle par défaut, sont environ 3 fois plus lents que les MoE à 3 Md actifs (Lightning, Qwen3.6). Ils répondent mieux, mais moins vite. À plusieurs utilisateurs, le débit par personne baisse encore.
 
 Écartés après examen : DeepSeek V4.1 Flash (765 Go), GLM-5.3 (328 Go au minimum) et Kimi K3 (2,8 To) ne tiennent pas sur un Spark ; Mistral Medium 3.5 128B est un modèle dense (environ 90 Go lus à chaque mot, donc très lent) ; Kolibri 1 ne gère que l'allemand et l'anglais ; Step 3.7 Flash (117 Go) ne laisse pas de marge.
 
-**Utiliser ~90 % de la mémoire.** Les recettes NVIDIA réservent 0.8 pour vLLM (`VLLM_GPU_UTIL`), plus 0.08 pour les embeddings et le reranker. Un seul gros modèle à la fois, et rien d'autre de lourd sur le GPU. Pour tester les gros modèles : `nemotron-3.5-super…`, puis `qwen3.8-flash-next…`, puis `ornith…` (le plus récent et le moins validé). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
+**Utiliser ~90 % de la mémoire.** Les recettes NVIDIA réservent 0.8 pour vLLM (`VLLM_GPU_UTIL`), plus 0.08 pour les embeddings et le reranker. Un seul gros modèle à la fois, et rien d'autre de lourd sur le GPU. Autres gros modèles à comparer avec le modèle par défaut : `qwen3.8-flash-next…`, puis `ornith…` (le plus récent et le moins validé). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
 
 Où trouver d'autres modèles :
 - **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.
@@ -378,7 +378,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 
 - **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
-- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec le 35B. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
+- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec Nemotron Super. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
 
 ---
 
@@ -396,7 +396,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 | OpenCode en mode `run` : « permission requested… auto-rejecting » | Les modifications demandent ton accord, et il n'y a pas d'interface en mode `run` | Utiliser `opencode` (interactif), ou `--auto` sur un projet de test |
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
-| Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis essayer une autre image avec `VLLM_IMAGE` (l'image NVIDIA du [playbook Spark](https://build.nvidia.com/spark/vllm), ou une version plus récente de vLLM). Relancer avec `docker compose up -d vllm` |
+| Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis relancer avec `docker compose up -d vllm`. Si ça ne suffit pas : repli sur `./scripts/modeles.py utiliser qwen3.6-35b-a3b-nvfp4`. Les pannes probables sont détaillées dans [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md), section 8 |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---
@@ -429,7 +429,7 @@ IA locale/
 ├── loras/                      adaptateurs entraînés
 ├── panneau/                    panneau web (server.py, index.html)
 └── scripts/
-    ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
+    ├── 00-prerequis.sh         PC : driver, NVIDIA Container Toolkit (une fois, sudo) ; Spark : vérifications seulement
     ├── 01-telecharger-modeles.sh   poids des modèles (--spark pour le Spark)
     ├── 02-verifier-spark.sh    vérifie que chat, outils, embeddings et reranker répondent
     ├── preparer-env-spark.sh   crée le .env du Spark (secrets générés)

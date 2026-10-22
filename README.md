@@ -49,7 +49,7 @@ Installe OpenCode et le configure. Le script demande la clé. Le détail est dan
 ./scripts/00-prerequis.sh
 ```
 
-Sur le PC de test : installe le driver NVIDIA, Docker compose, le NVIDIA Container Toolkit et Python (sudo, redémarrage ensuite). Sur le DGX Spark, le pilote et le toolkit sont déjà fournis par DGX OS et ne sont pas touchés.
+Sur le PC de test : installe le driver NVIDIA, Docker compose, le NVIDIA Container Toolkit et Python (sudo, redémarrage ensuite). Sur le DGX Spark : n'installe rien (pilote et Docker sont déjà en place), il vérifie seulement et prépare l'outil de téléchargement.
 
 ```bash
 ./scripts/01-telecharger-modeles.sh
@@ -75,4 +75,4 @@ Crée la configuration à partir du modèle (pense à changer les secrets), puis
 | Panneau web de contrôle | ✅ testé |
 | Open WebUI | ⚠️ prêt, compte admin à créer |
 | Fine-tuning LoRA `normes` | ⏳ scripts prêts, pas encore lancé |
-| Configuration DGX Spark (branche `spark`) | ⏳ prête et vérifiée sur PC (rendu Docker, scripts), **jamais lancée sur un Spark** : voir [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) |
+| Configuration DGX Spark (branche `spark`, modèle Nemotron 3.5 Super VL 120B) | ⏳ prête et vérifiée sur PC (rendu Docker, scripts), **jamais lancée sur un Spark** : voir [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) |

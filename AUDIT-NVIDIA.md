@@ -60,6 +60,8 @@ Sans les caches, chaque recréation du conteneur recompile les noyaux, ce qui ra
 **Correction :** les ajouter à `docker-compose.spark.yml` pour tous les modèles.
 
 ### 3.3 Modèle par défaut : Qwen3.6-35B-A3B NVFP4
+
+> **Mise à jour du 22/10/2026 :** le modèle par défaut du Spark est désormais Nemotron 3.5 Super VL 120B-A12B NVFP4 (recette NVIDIA validée le 15/10/2026, pilote 580.159). Qwen3.6-35B reste disponible comme profil de repli.
 Recette NVIDIA validée le 19/10/2026 (mesurée à **124 tok/s** en génération de code).
 
 | Paramètre | NVIDIA | Ma stack |

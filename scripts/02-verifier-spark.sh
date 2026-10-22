@@ -24,7 +24,9 @@ def etape(nom, f):
 def chat():
     r = post("/v1/chat/completions", {"model": "qwen-local", "max_tokens": 2048,
              "messages": [{"role": "user", "content": "Réponds juste : bonjour"}]})
-    return r["choices"][0]["message"]["content"].strip()[:60]
+    m = r["choices"][0]["message"]
+    # Modèles à raisonnement (Nemotron) : la réponse peut être vide si le raisonnement a tout consommé
+    return ((m.get("content") or "").strip() or "(réponse vide, raisonnement : " + (m.get("reasoning_content") or "")[:40] + "…)")[:60]
 
 def outil():
     r = post("/v1/chat/completions", {"model": "qwen-local", "max_tokens": 2048,
