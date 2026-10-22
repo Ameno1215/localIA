@@ -29,6 +29,7 @@ from pathlib import Path
 PROJET = Path(__file__).resolve().parent.parent
 PROFILS = PROJET / "config" / "modeles-spark"
 CACHE = PROJET / "data" / "cache-recettes-gb10.json"
+WS = PROJET  # dossier des données (WS_DIR du .env ; le dossier du projet si absent). Fixé dans main()
 RECETTES = "https://recipes.vllm.ai"
 IMAGE_DEFAUT = "vllm/vllm-openai:v0.30.0"
 MEMOIRE_GO = 128           # mémoire unifiée du Spark
@@ -288,8 +289,17 @@ def lire_env(chemin: Path) -> dict[str, str]:
     return res
 
 
+def resoudre_ws(env: Path) -> Path:
+    """WS_DIR du .env : dossier des données (modèles, caches, bases). Relatif = relatif au projet."""
+    valeur = lire_env(env).get("WS_DIR", "").strip()
+    if not valeur:
+        return PROJET
+    chemin = Path(valeur).expanduser()
+    return chemin if chemin.is_absolute() else (PROJET / chemin).resolve()
+
+
 def telecharge(dossier: str) -> bool:
-    return (PROJET / "models" / dossier / "config.json").exists()
+    return (WS / "models" / dossier / "config.json").exists()
 
 
 def extras(p: dict) -> list[str]:
@@ -314,14 +324,17 @@ def cmd_lister(a) -> None:
         print(f"{f.stem:{larg}} {poids:14} {p.get('MODELE_HF', '?')}{'   ◀ actif' if p['VLLM_MODEL'] == actif else ''}")
 
 
-def hf(args: list[str]) -> None:
+def hf(hf_id: str, dossier: str, exclure: list[str] | None = None) -> None:
+    """Télécharge un modèle dans WS/models/<dossier>."""
     local = PROJET / ".venv" / "bin" / "hf"
+    sup = [x for e in (exclure or []) for x in ("--exclude", e)]
     if local.exists():
-        cmd = [str(local), *args]
+        cmd = [str(local), "download", hf_id, "--local-dir", str(WS / "models" / dossier), *sup]
     else:
         cmd = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp", "-e", "HF_TOKEN",
-               "-v", f"{PROJET}/models:/work/models", "-w", "/work", "python:3.12-slim", "sh", "-c",
-               'pip install -q --user huggingface_hub && /tmp/.local/bin/hf "$@"', "hf", *args]
+               "-v", f"{WS}/models:/work/models", "-w", "/work", "python:3.12-slim", "sh", "-c",
+               'pip install -q --user huggingface_hub && /tmp/.local/bin/hf "$@"', "hf",
+               "download", hf_id, "--local-dir", f"/work/models/{dossier}", *sup]
     if subprocess.run(cmd, cwd=PROJET).returncode != 0:
         erreur("le téléchargement a échoué (modèle protégé ? exporte HF_TOKEN=… puis relance)")
 
@@ -329,12 +342,12 @@ def hf(args: list[str]) -> None:
 def cmd_telecharger(a) -> None:
     p = lire_profil(a.nom)
     if tout_telecharge(p) and not a.force:
-        return print(f"{p['MODELE_HF']} est déjà dans models/{p['MODELE_DOSSIER']}")
-    (PROJET / "models").mkdir(exist_ok=True)
+        return print(f"{p['MODELE_HF']} est déjà dans {WS / 'models' / p['MODELE_DOSSIER']}")
+    (WS / "models").mkdir(parents=True, exist_ok=True)
     for hf_id, dossier in [(p["MODELE_HF"], p["MODELE_DOSSIER"])] + [(e, e.split("/")[-1]) for e in extras(p)]:
         if a.force or not telecharge(dossier):
-            hf(["download", hf_id, "--local-dir", f"models/{dossier}"])
-        print(f"OK : models/{dossier}")
+            hf(hf_id, dossier)
+        print(f"OK : {WS / 'models' / dossier}")
 
 
 def ecrire_env(chemin: Path, valeurs: dict[str, str]) -> None:
@@ -368,7 +381,7 @@ def cmd_utiliser(a) -> None:
         extra_compose.write_text(json.dumps({"services": {"vllm": json.loads(p["COMPOSE_EXTRA"])}}, indent=2) + "\n")
         fichiers.append(extra_compose.name)
         for v in json.loads(p["COMPOSE_EXTRA"]).get("volumes", []):
-            (PROJET / v.split(":")[0]).mkdir(parents=True, exist_ok=True)
+            (Path(v.split(":")[0].replace("${WS_DIR:-./ws}", str(WS)))).mkdir(parents=True, exist_ok=True)
     else:
         extra_compose.unlink(missing_ok=True)
     ecrire_env(env, {"COMPOSE_FILE": ":".join(fichiers)})
@@ -402,10 +415,13 @@ def main() -> None:
     c = sp.add_parser("ajouter"); c.add_argument("id_hf"); c.add_argument("--nom"); c.add_argument("--dossier")
     c.add_argument("--gpu-util"); c.add_argument("--contexte"); c.add_argument("--sequences"); c.add_argument("--ecraser", action="store_true"); c.set_defaults(f=cmd_ajouter)
     c = sp.add_parser("lister"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_lister)
-    c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
+    c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--env", default=".env"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
     c = sp.add_parser("utiliser"); c.add_argument("nom"); c.add_argument("--env", default=".env")
     c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
     a = ap.parse_args()
+    global WS
+    env = Path(getattr(a, "env", ".env"))
+    WS = resoudre_ws(env if env.is_absolute() else PROJET / env)
     a.f(a)
 
 

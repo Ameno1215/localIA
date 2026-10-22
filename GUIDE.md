@@ -280,16 +280,16 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 
 ### Côté serveur (sur le Spark)
 
-1. **Copie le projet** sur le Spark (`git bundle`, voir le pas-à-pas), puis copie à part les PDF de `docs-internes/` : ils ne sont pas dans git.
-2. **Télécharge les modèles du Spark** (~30 Go), avec internet ou depuis un disque de transfert :
+1. **Clone le projet** sur le Spark (`git clone -b spark …`, voir le pas-à-pas), puis copie à part les PDF des normes dans le dossier de données (`WS_DIR/docs-internes/`) : ils ne sont pas dans git.
+2. **Prépare la configuration :**
+   ```bash
+   ./scripts/preparer-env-spark.sh spark1.lan /home/data/ws
+   ```
+   Le script génère les secrets, crée les dossiers de données (`WS_DIR`, par exemple `/home/data/ws`) (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
+3. **Télécharge les modèles du Spark** (~30 Go, dans `WS_DIR/models`), avec internet ou depuis un disque de transfert :
    ```bash
    ./scripts/01-telecharger-modeles.sh --spark
    ```
-3. **Prépare la configuration :**
-   ```bash
-   ./scripts/preparer-env-spark.sh spark1.lan
-   ```
-   Le script génère les secrets (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
 4. **Démarre la stack :**
    ```bash
    docker compose up -d
@@ -464,6 +464,7 @@ IA locale/
 | `VLLM_TOOL_PARSER` | Format des appels d'outils du modèle |
 | `VLLM_EXTRA_ARGS` | Options vLLM propres au modèle |
 | `VLLM_LORA_ARGS` | Active l'adaptateur `normes` (vide tant qu'il n'est pas entraîné) |
+| `WS_DIR` | Spark uniquement : dossier des données des conteneurs (modèles, caches, bases, documents) |
 | `VLLM_IMAGE` | Spark uniquement : image Docker de vLLM |
 | `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
 | `MCP_OUTILS_CODE` | 0 (défaut) : seulement la recherche dans les normes. 1 : ajoute des outils fichiers/commandes sur `workspace/` |

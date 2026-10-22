@@ -12,6 +12,8 @@
 #    Open WebUI sur le port 8443
 #  - le serveur MCP n'expose que rechercher_docs (OUTILS_CODE=0) : les agents travaillent sur les postes
 #
+# Configuration (compose, config/, scripts) = dossier du projet ; DONNÉES (modèles, caches, bases, documents) = WS_DIR (défaut ./ws).
+#
 # Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
 
 x-vllm-pooling: &vllm-pooling
@@ -19,7 +21,7 @@ x-vllm-pooling: &vllm-pooling
   entrypoint: ["vllm", "serve"]
   environment:
     HF_HUB_OFFLINE: "1"
-  volumes: ["./models:/models:ro"]
+  volumes: ["${WS_DIR:-./ws}/models:/models:ro"]
   ipc: host
   deploy:
     resources:
@@ -61,10 +63,12 @@ services:
     ulimits:
       memlock: -1
       stack: 67108864
-    volumes:
-      - ./cache/vllm:/root/.cache/vllm
-      - ./cache/flashinfer:/root/.cache/flashinfer
-      - ./cache/triton:/root/.triton
+    volumes: !override
+      - ${WS_DIR:-./ws}/models:/models:ro
+      - ${WS_DIR:-./ws}/loras:/loras:ro
+      - ${WS_DIR:-./ws}/cache/vllm:/root/.cache/vllm
+      - ${WS_DIR:-./ws}/cache/flashinfer:/root/.cache/flashinfer
+      - ${WS_DIR:-./ws}/cache/triton:/root/.triton
     ports: !override
       - "127.0.0.1:8000:8000"
 
@@ -85,6 +89,20 @@ services:
       OUTILS_CODE: "0"
       RAG_BACKEND: vllm
     ports: !reset []
+    volumes: !override
+      - ${WS_DIR:-./ws}/docs-internes:/docs:ro
+      - ${WS_DIR:-./ws}/workspace:/workspace
+      - ./finetune:/finetune:ro
+      - ${WS_DIR:-./ws}/data:/data
+
+  # Données persistantes dans WS_DIR (et non dans des volumes cachés du stockage Docker)
+  postgres:
+    volumes: !override
+      - ${WS_DIR:-./ws}/postgres:/var/lib/postgresql/data
+
+  qdrant:
+    volumes: !override
+      - ${WS_DIR:-./ws}/qdrant:/qdrant/storage
 
   litellm:
     ports: !override
@@ -93,6 +111,8 @@ services:
   open-webui:
     ports: !override
       - "127.0.0.1:3000:8080"
+    volumes: !override
+      - ${WS_DIR:-./ws}/open-webui:/app/backend/data
 
   # Seule porte d'entrée réseau. Certificat interne : distribuer la CA aux postes (voir GUIDE.md).
   caddy:
@@ -102,10 +122,7 @@ services:
       MCP_TOKEN: ${MCP_TOKEN}
     volumes:
       - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
+      - ${WS_DIR:-./ws}/caddy:/data
     ports: ["443:443", "8443:8443"]
     depends_on: [litellm, mcp-docs, open-webui]
     restart: unless-stopped
-
-volumes:
-  caddy-data:

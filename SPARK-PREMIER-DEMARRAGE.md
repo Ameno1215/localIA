@@ -6,56 +6,73 @@ Ce fichier suffit pour tester la branche `spark` de zéro à « ça répond ». 
 
 ## 0. Avant de commencer
 
-- DGX OS avec Docker, et ton utilisateur dans le groupe `docker` (`groups | grep docker`).
+- DGX OS avec Docker, et le compte qui lance la stack dans le groupe `docker` (`groups | grep docker`). Ce groupe donne un accès équivalent à root : réserve-le au compte de service.
 - Pilote : `nvidia-smi` doit répondre. Les recettes NVIDIA ont été validées avec un pilote 580.x et CUDA 13.x.
 - Espace disque : compte **100 Go libres** pour le démarrage par défaut (modèle 23 Go, embeddings et reranker 5 Go, images Docker), et **250 Go** si tu veux essayer les gros modèles (75 à 103 Go de poids chacun).
 - Internet pour le premier lancement (modèles et images). Ensuite tout peut tourner hors ligne.
 - Un nom DNS ou une adresse IP que les postes de l'équipe peuvent joindre (`spark1.lan` dans les exemples).
 
+### Où vont les fichiers
+
+Le projet sépare la **configuration** des **données des conteneurs**. Avec l'organisation `/home/data/` :
+
+| Dossier | Contenu | Réglé par |
+|---|---|---|
+| `/home/data/compose/ia-locale` | Le projet cloné : fichiers Docker Compose, `config/`, scripts, `.env` | Le `git clone` de l'étape 1 |
+| `/home/data/ws` | Les **données** : modèles (`models/`), caches de compilation, bases Postgres et Qdrant, comptes Open WebUI, certificats, documents des normes | `WS_DIR` dans le `.env` (étape 3) |
+| `/home/data/docker` | Le stockage de Docker lui-même (images, couches, conteneurs) | `data-root` de Docker (ci-dessous) |
+
+Rien n'est stocké dans des « volumes Docker » cachés : tout ce qui est persistant est un dossier de `WS_DIR`, donc facile à sauvegarder ou à déplacer.
+
+**Pour mettre le stockage de Docker sur `/home/data/docker`** (une seule fois, par un administrateur, **avant** de télécharger la moindre image). Ajoute cette ligne dans `/etc/docker/daemon.json` sans effacer les lignes existantes (DGX OS y déclare le moteur NVIDIA) :
+```json
+{ "data-root": "/home/data/docker" }
+```
+Puis :
+```bash
+sudo systemctl restart docker
+```
+Vérifie avec `docker info --format '{{.DockerRootDir}}'`.
+
 ## 1. Copier le projet sur le Spark
 
-La branche `spark` n'existe que sur le PC où elle a été écrite (aucun dépôt distant). Deux moyens :
-
-**A. Par un fichier unique (testé, 1,8 Mo)**
+Le dépôt est sur GitHub (`git@github.com:Ameno1215/localIA.git`, branche `spark`). Sur le Spark, avec le compte de service :
 ```bash
-# Sur le PC, dans le dossier du projet :
-git bundle create ~/ia-locale-spark.bundle spark
-scp ~/ia-locale-spark.bundle utilisateur@spark1.lan:
-
-# Sur le Spark :
-git clone -b spark ia-locale-spark.bundle ia-locale
-cd ia-locale
+git clone -b spark git@github.com:Ameno1215/localIA.git /home/data/compose/ia-locale
+cd /home/data/compose/ia-locale
 ```
+Si le dépôt est privé, le Spark doit avoir une clé SSH autorisée sur GitHub (`Permission denied (publickey)` sinon).
 
-**B. Si tu préfères copier le dossier** : `rsync -av --exclude models/ --exclude '.venv*' --exclude .env --exclude cache/ ./ utilisateur@spark1.lan:ia-locale/`
+Sans accès à GitHub : `git bundle create ~/ia-locale-spark.bundle spark` sur le PC, copie du fichier (`scp`), puis `git clone -b spark ia-locale-spark.bundle ia-locale` sur le Spark.
 
-**Les PDF des normes ne sont pas dans git** (licences ISO et GlobalPlatform). Copie-les à part, sinon la recherche dans les normes restera vide :
+**Les PDF des normes ne sont pas dans git** (licences ISO et GlobalPlatform). Copie-les dans le dossier de données, sinon la recherche dans les normes restera vide :
 ```bash
-# Sur le PC :
-rsync -av docs-internes/ utilisateur@spark1.lan:ia-locale/docs-internes/
+# Sur le PC (remplace WS par le dossier des données du Spark) :
+rsync -av docs-internes/ utilisateur@spark1.lan:/home/data/ws/docs-internes/
 ```
 
 ## 2. Préparer le Spark
 
 ```bash
-cd ~/ia-locale
 ./scripts/00-prerequis.sh      # sur DGX OS : ne touche ni au pilote ni au NVIDIA Container Toolkit
 ```
-Il installe seulement Python et l'outil de téléchargement `hf`. Il demande `sudo`.
+Il installe seulement Python et l'outil de téléchargement `hf`. Il demande `sudo` : lance-le avec un compte administrateur si ton compte de service n'a pas `sudo` (il n'y a rien d'autre à faire avec les droits administrateur).
 
-## 3. Télécharger les modèles (≈ 28 Go)
+## 3. Créer le `.env`
+
+```bash
+./scripts/preparer-env-spark.sh spark1.lan /home/data/ws      # ton nom DNS ou ton adresse IP, puis le dossier des données
+```
+Il copie `.env.spark.example`, génère les secrets (la clé maître LiteLLM commence bien par `sk-`), fixe le nom du serveur et `WS_DIR`, puis **crée les sous-dossiers de données** à ton nom (c'est important : s'ils étaient créés par Docker, ils appartiendraient à `root` et le téléchargement des modèles échouerait). Il ne remplace jamais un `.env` existant. Le jeton d'équipe pour les normes est `MCP_TOKEN` (à donner aux développeurs).
+
+Si `/home/data/ws` n'existe pas ou n'est pas à ton nom, le script te donne la commande pour le créer (`sudo mkdir -p /home/data/ws && sudo chown $USER /home/data/ws`).
+
+## 4. Télécharger les modèles (≈ 28 Go)
 
 ```bash
 ./scripts/01-telecharger-modeles.sh --spark
 ```
-Embeddings (`bge-m3`), reranker et le modèle par défaut (Qwen3.6-35B NVFP4). Les modèles sont publics, aucun jeton Hugging Face n'est nécessaire.
-
-## 4. Créer le `.env`
-
-```bash
-./scripts/preparer-env-spark.sh spark1.lan      # ton nom DNS ou ton adresse IP
-```
-Il copie `.env.spark.example`, génère les secrets (la clé maître LiteLLM commence bien par `sk-`) et fixe le nom du serveur. Il ne remplace jamais un `.env` existant. Le jeton d'équipe pour les normes est `MCP_TOKEN` (à donner aux développeurs).
+Embeddings (`bge-m3`), reranker et le modèle par défaut (Qwen3.6-35B NVFP4), dans `WS_DIR/models`. Les modèles sont publics, aucun jeton Hugging Face n'est nécessaire. Le script refuse de démarrer tant que le `.env` de l'étape 3 n'existe pas.
 
 ## 5. Démarrer
 
@@ -119,6 +136,7 @@ docker compose exec mcp-docs python ingest.py       # indexe les PDF de docs-int
 | Débit très bas, texte incohérent | Vider `VLLM_SPEC_ARGS=` dans `.env`, puis `docker compose up -d vllm` |
 | Embeddings ou reranker en erreur | `docker compose logs --tail 80 tei-embed tei-rerank` (ils tournent sous vLLM en mode « pooling », non validé sur Spark) |
 | `[ECHEC] appel d'outil` | Le parser d'outils ne correspond pas au modèle : `VLLM_TOOL_PARSER` dans `.env` |
+| `Permission denied` en écrivant dans le dossier des données | Un sous-dossier a été créé par Docker au nom de `root`. `sudo chown -R $USER /home/data/ws/models` (et le dossier concerné), ou relance `preparer-env-spark.sh` sur un `.env` supprimé |
 | Autre | Section 9 du GUIDE |
 
 **Pour me transmettre un problème :**

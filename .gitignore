@@ -3,6 +3,7 @@
 .env.vllm
 .compose.vllm.yml
 cache/
+ws/
 
 # Poids des modèles (~20 Go, téléchargés par scripts/01-telecharger-modeles.sh)
 models/
