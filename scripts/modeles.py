@@ -382,7 +382,7 @@ def cmd_utiliser(a) -> None:
     if subprocess.run([*compose, "up", "-d", "--force-recreate", "vllm"], cwd=PROJET).returncode != 0:
         erreur("docker compose a échoué")
     print("Chargement du modèle (plusieurs minutes)…", end="", flush=True)
-    fin = time.time() + 1800
+    fin = time.time() + 3600
     while time.time() < fin:
         etat = subprocess.run([*compose, "ps", "--format", "{{.Health}}|{{.State}}", "vllm"], cwd=PROJET, capture_output=True, text=True).stdout.strip()
         if etat.startswith("healthy"):

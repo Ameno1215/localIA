@@ -49,6 +49,13 @@ services:
         required: false
     environment:
       VLLM_USE_RUST_FRONTEND: "1"
+    # Contrôle de santé sans curl (absent de certaines images) ; un gros modèle met longtemps à charger
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60m
     # Comme dans toutes les recettes NVIDIA : mémoire partagée, mémoire verrouillée, caches de compilation persistants
     shm_size: 16g
     ulimits:

@@ -23,3 +23,6 @@ workspace/
 
 # Réglages locaux de Claude Code
 .claude/settings.local.json
+
+# Rapports de diagnostic (scripts/diagnostic-spark.sh)
+diagnostic-spark-*.txt
