@@ -131,6 +131,7 @@ docker compose exec mcp-docs python ingest.py       # indexe les PDF de docs-int
 | Avec un profil Qwen (image `nvcr.io/...`) : `compatibility mode is UNAVAILABLE` ou `CUDA driver version is insufficient` | L'image NGC vise un pilote plus récent que le 580 du Spark. Dans `.env` : `VLLM_IMAGE=vllm/vllm-openai:v0.30.0` et `--load-format fastsafetensors` à la place de `--load-format safetensors` dans `VLLM_EXTRA_ARGS` |
 | Embeddings ou reranker en erreur | `docker compose logs --tail 80 tei-embed tei-rerank` (ils tournent sous vLLM en mode « pooling », non validé sur Spark) |
 | `[ECHEC] appel d'outil` | Le parser d'outils ne correspond pas au modèle : `VLLM_TOOL_PARSER` dans `.env` |
+| `Crée d'abord le .env du Spark` alors que le `.env` existe, ou `grep: .env: Permission denied` | Le `.env` appartient à `root` (script lancé avec `sudo`). `sudo chown $USER .env` dans le dossier du projet, puis relance les scripts **sans** sudo |
 | `Permission denied` en écrivant dans le dossier des données | Un sous-dossier a été créé par Docker au nom de `root`. `sudo chown -R $USER /home/data/ws/models` (et le dossier concerné), ou relance `preparer-env-spark.sh` sur un `.env` supprimé |
 | Autre | Section 9 du GUIDE |
 
