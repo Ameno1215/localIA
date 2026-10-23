@@ -19,6 +19,15 @@ if [ "$(uname -m)" = "aarch64" ]; then
   verifier "docker compose" "docker compose version" "plugin compose absent"
   verifier "python3" "python3 --version" "python3 absent"
   nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | sed 's/^/  GPU : /'
+  # Spécification CDI du NVIDIA Container Toolkit périmée (pilote mis à jour sans la régénérer) :
+  # Docker refuse alors de démarrer les conteneurs GPU (« failed to fulfil mount request: open /usr/lib/...: no such file »)
+  cdi_manquants=$(cat /etc/cdi/nvidia*.yaml /var/run/cdi/nvidia*.yaml 2>/dev/null \
+    | sed -n 's/^ *hostPath: *//p' | sort -u | while read -r f; do [ -e "$f" ] || echo "$f"; done)
+  if [ -n "$cdi_manquants" ]; then
+    echo "  [ECHEC] spécification CDI NVIDIA périmée, fichiers absents : $(echo $cdi_manquants | cut -c1-200)"
+    echo "          à régénérer (administrateur) : sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml && sudo systemctl restart docker"
+    ok=0
+  fi
   echo "  Stockage Docker : $(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo '?')"
   # Outil de téléchargement hf dans .venv. Si le module venv manque, les scripts passent par un conteneur Python : pas grave.
   if [ ! -x .venv/bin/hf ]; then

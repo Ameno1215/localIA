@@ -123,6 +123,7 @@ docker compose exec mcp-docs python ingest.py       # indexe les PDF de docs-int
 
 | Ce que tu vois | Piste |
 |---|---|
+| `failed to fulfil mount request: open /usr/lib/aarch64-linux-gnu/libnvidia-….so…: no such file or directory` au `docker compose up` | Rien à voir avec le projet : la spécification CDI du NVIDIA Container Toolkit (`/etc/cdi/nvidia.yaml` ou `/var/run/cdi/nvidia.yaml`) liste des fichiers d'une ancienne version du pilote. Un administrateur la régénère : `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml && sudo systemctl restart docker` (si le fichier est dans `/var/run/cdi`, régénérer celui-là ou `sudo systemctl restart nvidia-cdi-refresh`). Vérifier : `docker run --rm --gpus all ubuntu nvidia-smi`, puis `docker compose up -d` |
 | `vllm` redémarre en boucle ou s'arrête | `docker compose logs --tail 100 vllm`. Mémoire : `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` (mémoire unifiée, conseil NVIDIA) |
 | `vllm` s'arrête pendant le chargement (mémoire) | Vider le cache disque (ligne du dessus), arrêter tout autre programme sur le GPU, puis `docker compose up -d vllm`. Sinon, baisser `VLLM_MAX_MODEL_LEN` à `131072` dans `.env` |
 | `unrecognized arguments` ou option inconnue au démarrage de `vllm` | L'image ne correspond pas au profil : vérifier `VLLM_IMAGE=eugr/spark-vllm:nightly-20261015` dans `.env` (le profil Nemotron en a besoin) |
