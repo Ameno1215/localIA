@@ -8,6 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Dossier des données : WS_DIR du .env (sur le Spark). Sans .env : ./models, comme sur le PC de test.
+if [ -e .env ] && [ ! -r .env ]; then
+  echo ".env existe mais n'est pas lisible par $USER (créé avec sudo ?). Corrige : sudo chown \$USER .env — puis relance sans sudo."
+  exit 1
+fi
 WS_DIR="$(grep -s -E '^WS_DIR=' .env | cut -d= -f2- || true)"
 if [ "${1:-}" = "--spark" ] && [ -z "$WS_DIR" ]; then
   echo "Crée d'abord le .env du Spark : ./scripts/preparer-env-spark.sh <nom-du-serveur> [dossier-des-données]"
@@ -15,6 +19,11 @@ if [ "${1:-}" = "--spark" ] && [ -z "$WS_DIR" ]; then
 fi
 MODELS="${WS_DIR:-.}/models"
 mkdir -p "$MODELS"
+if [ ! -w "$MODELS" ] || find "$MODELS" -mindepth 1 -maxdepth 1 ! -writable 2>/dev/null | grep -q .; then
+  echo "$MODELS (ou un de ses sous-dossiers) n'est pas modifiable par $USER (créé avec sudo ?)."
+  echo "Corrige : sudo chown -R \$USER ${WS_DIR:-$MODELS} — puis relance sans sudo."
+  exit 1
+fi
 echo "==> Modèles dans $(realpath "$MODELS")"
 # hf CLI : celui du .venv s'il existe, sinon via un conteneur Python jetable
 if [ -x .venv/bin/hf ]; then
