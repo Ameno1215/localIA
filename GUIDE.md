@@ -359,7 +359,7 @@ Profils fournis (liste revue le 21/10/2026 d'après Hugging Face, alignée sur l
 
 Écartés après examen : DeepSeek V4.1 Flash (765 Go), GLM-5.3 (328 Go au minimum) et Kimi K3 (2,8 To) ne tiennent pas sur un Spark ; Mistral Medium 3.5 128B est un modèle dense (environ 90 Go lus à chaque mot, donc très lent) ; Kolibri 1 ne gère que l'allemand et l'anglais ; Step 3.7 Flash (117 Go) ne laisse pas de marge.
 
-**Utiliser ~90 % de la mémoire.** Les recettes NVIDIA réservent 0.8 pour vLLM (`VLLM_GPU_UTIL`), plus 0.08 pour les embeddings et le reranker. Un seul gros modèle à la fois, et rien d'autre de lourd sur le GPU. Autres gros modèles à comparer avec le modèle par défaut : `qwen3.8-flash-next…`, puis `ornith…` (le plus récent et le moins validé). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
+**Utiliser ~90 % de la mémoire.** Les recettes NVIDIA réservent 0.8 pour vLLM (`VLLM_GPU_UTIL`), mais avec le modèle seul. Ici, la pile complète (système, embeddings et reranker, Open WebUI, bases) occupe déjà ~30 Gio au démarrage de vLLM : les profils réservent donc 0.74 (mesuré sur le Spark, 0.8 refuse de démarrer). Un seul gros modèle à la fois, et rien d'autre de lourd sur le GPU. Autres gros modèles à comparer avec le modèle par défaut : `qwen3.8-flash-next…`, puis `ornith…` (le plus récent et le moins validé). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
 
 Où trouver d'autres modèles :
 - **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.
