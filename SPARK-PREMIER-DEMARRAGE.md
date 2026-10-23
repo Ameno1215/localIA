@@ -92,7 +92,7 @@ Pour le débit, NVIDIA mesure **51 tok/s** pour ce modèle sur Spark (une requê
 Une fois l'étape 6 réussie (5 lignes `[OK]`), tout est prêt pour les deux outils, avec Nemotron 3.5 Super VL : 120 Md de paramètres, dont 12 Md actifs par mot, contexte de 262 144 jetons. Il comprend aussi les images (une par message). Le nom côté clients reste `qwen-local` : c'est un nom fixe, pas le modèle réel.
 
 **Open WebUI (le chat)** : depuis un navigateur du réseau.
-1. Ouvre `https://<SPARK_HOSTNAME>:8443`. Le navigateur signale un certificat inconnu (le certificat est interne) : accepte-le pour ce test.
+1. Ouvre `https://<SPARK_HOSTNAME>:8443` (pour un test sans nom ni certificat : `OPEN_WEBUI_HTTP=0.0.0.0` dans `.env`, `docker compose up -d open-webui`, puis `http://<ip-du-spark>:3000`). Le navigateur signale un certificat inconnu (le certificat est interne) : accepte-le pour ce test.
 2. **Crée tout de suite le compte administrateur** : le premier compte créé devient admin, et la page est joignable par tout le réseau.
 3. Choisis le modèle **`qwen-local`** (c'est Nemotron derrière). Ignore `normes` : c'est le modèle entraîné sur les normes, qui n'existe pas encore (erreur si tu le choisis).
 4. Pose une question. Pour la recherche dans les normes, copie d'abord les PDF (étape 1) et lance l'indexation ci-dessous. L'outil de recherche est déclaré d'office ; sinon, voir la section 6 du GUIDE.

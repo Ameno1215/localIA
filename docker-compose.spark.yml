@@ -108,9 +108,11 @@ services:
     ports: !override
       - "127.0.0.1:4000:4000"
 
+  # OPEN_WEBUI_HTTP=0.0.0.0 dans .env : Open WebUI aussi en HTTP simple sur le réseau (http://<ip>:3000),
+  # sans nom ni certificat, mais mots de passe et conversations en clair. Défaut : local au Spark seulement.
   open-webui:
     ports: !override
-      - "127.0.0.1:3000:8080"
+      - "${OPEN_WEBUI_HTTP:-127.0.0.1}:3000:8080"
     volumes: !override
       - ${WS_DIR:-./ws}/open-webui:/app/backend/data
 
