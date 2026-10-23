@@ -49,8 +49,8 @@ services:
     env_file:
       - path: .env.vllm
         required: false
-    environment:
-      VLLM_USE_RUST_FRONTEND: "1"
+    # Pas de VLLM_USE_RUST_FRONTEND : le frontend Rust refuse --media-io-kwargs / --mm-processor-cache-gb (profil Nemotron)
+    # et ignore --enable-auto-tool-choice (appels d'outils cassés). Les recettes NVIDIA gardent le frontend Python.
     # Contrôle de santé sans curl (absent de certaines images) ; un gros modèle met longtemps à charger
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status == 200 else 1)"]
