@@ -238,16 +238,30 @@ docker compose logs -f mcp-docs
    ```bash
    docker compose exec mcp-docs python ingest.py
    ```
-3. **Pour tout réindexer** (par exemple après avoir supprimé des fichiers) :
+3. **Redémarre le serveur MCP** quand tu as ajouté ou renommé des fichiers : la liste des documents, que le modèle lit pour décider de chercher, n'est construite qu'au démarrage.
+   ```bash
+   docker compose restart mcp-docs
+   ```
+4. **Pour tout réindexer** (par exemple après avoir supprimé des fichiers) :
    ```bash
    docker compose exec mcp-docs python ingest.py --reset
    ```
-4. **Vérifie ce qui est trouvé** pour une question :
+5. **Vérifie ce qui est trouvé** pour une question :
    ```bash
    docker compose exec mcp-docs python -c "from server import rechercher_docs; print(rechercher_docs('ma question', 3))"
    ```
 
-Les documents sont découpés en morceaux d'environ 1 200 caractères. Les PDF scannés (des images, sans texte) ne sont pas lisibles et devront d'abord passer par une reconnaissance de caractères (OCR).
+Les documents sont découpés en morceaux d'environ 1 200 caractères.
+
+**Tableaux et images.**
+- Les **tableaux Word** sont convertis en tableaux Markdown, à leur place dans le texte. Un long tableau est coupé en blocs qui répètent la ligne d'en-tête : chaque morceau garde le nom des colonnes.
+- Les **tableaux PDF « texte »** (sélectionnables à la souris) sont lus comme du texte : le contenu est trouvé, mais la mise en colonnes est perdue.
+- Les **images** (PDF et Word : tableau en image, schéma, capture, page scannée) sont transcrites par le LLM actif, s'il lit les images. C'est le cas du modèle par défaut, Nemotron 3.5 Super **VL**. Le texte obtenu (tableau Markdown, description de schéma, texte de la page) est indexé à la page de l'image et cité comme le reste. Les petites images (moins de 100 pixels de côté : icônes, puces), les images répétées (logo d'en-tête) et celles que le modèle juge décoratives sont ignorées.
+- **Durée :** quelques secondes par image (environ 50 jetons/s). Pendant ce temps l'indexation occupe une des 8 places de génération de vLLM : pour une grosse norme pleine de figures, lance-la plutôt hors des heures de travail.
+- **Modèle sans vision** (Lightning, Qwen…) : les images sont comptées « en attente » et le texte est indexé quand même. Au prochain `ingest.py` lancé avec un modèle vision, les documents concernés sont repris automatiquement. `--sans-images` force ce comportement (pour ne pas solliciter le LLM).
+- Les lignes `!` signalent ce qui n'a pas été lu : image non décodée, page sans texte, transcription tronquée.
+
+Après la mise à jour qui a ajouté la lecture des images, reconstruis le conteneur (`docker compose up -d --build mcp-docs`). Le premier `ingest.py` réindexe alors tous les documents une fois, images comprises.
 
 Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies normes.
 
@@ -396,6 +410,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 | OpenCode en mode `run` : « permission requested… auto-rejecting » | Les modifications demandent ton accord, et il n'y a pas d'interface en mode `run` | Utiliser `opencode` (interactif), ou `--auto` sur un projet de test |
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
+| Un tableau ou un schéma en image n'est pas trouvé | Image non transcrite : modèle sans vision, ou `ingest.py` lancé avant | Relancer `docker compose exec mcp-docs python ingest.py` avec le modèle par défaut (VL) : les images « en attente » sont reprises |
 | Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis relancer avec `docker compose up -d vllm`. Si ça ne suffit pas : repli sur `./scripts/modeles.py utiliser qwen3.6-35b-a3b-nvfp4`. Les pannes probables sont détaillées dans [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md), section 8 |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 

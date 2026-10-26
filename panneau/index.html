@@ -160,7 +160,7 @@ opencode</pre><button class="btn">Copier</button></div>
   <details>
     <summary>Ajouter tes normes et documents internes (RAG)</summary>
     <div>
-      <p>Dépose tes PDF, DOCX, MD ou TXT dans <code>docs-internes/</code>, puis lance l'indexation (le mode agent doit tourner). Seuls les fichiers modifiés sont réindexés.</p>
+      <p>Dépose tes PDF, DOCX, MD ou TXT dans <code>docs-internes/</code>, puis lance l'indexation (le mode agent doit tourner). Seuls les fichiers modifiés sont réindexés. Les tableaux Word sont convertis, et les images (tableaux, schémas, pages scannées) sont transcrites par le modèle s'il lit les images (modèle par défaut, VL). Redémarre <code>mcp-docs</code> après avoir ajouté des fichiers.</p>
       <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py</pre><button class="btn">Copier</button></div>
       <p>Pour tout réindexer :</p>
       <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py --reset</pre><button class="btn">Copier</button></div>

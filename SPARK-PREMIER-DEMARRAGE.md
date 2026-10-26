@@ -115,7 +115,8 @@ Une fois l'étape 6 réussie (5 lignes `[OK]`), tout est prêt pour les deux out
 
 **Indexer les normes et finir :**
 ```bash
-docker compose exec mcp-docs python ingest.py       # indexe les PDF de docs-internes/
+docker compose exec mcp-docs python ingest.py       # indexe docs-internes/ (texte, tableaux, images)
+docker compose restart mcp-docs                     # pour que le modèle voie la liste des documents
 ```
 - Panneau de contrôle (écoute seulement en local sur le Spark) : lance `./scripts/panneau.sh` sur le Spark, puis depuis ton poste `ssh -L 7000:localhost:7000 utilisateur@spark1.lan` et ouvre http://localhost:7000.
 
