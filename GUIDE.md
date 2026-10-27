@@ -234,7 +234,7 @@ docker compose logs -f mcp-docs
 ## 5. Les normes et documents internes (RAG)
 
 1. **Ajoute tes documents.** Dépose les fichiers (PDF, DOCX, MD, TXT) dans `docs-internes/` (sur le Spark : `WS_DIR/docs-internes/`, ou le dossier choisi par `DOCS_DIR` dans `.env`). Les sous-dossiers sont acceptés.
-2. **Lance l'indexation.** Le mode agent doit tourner. Seuls les fichiers nouveaux ou modifiés sont traités :
+2. **Lance l'indexation.** Depuis le panneau : section **Documents**, bouton **Indexer les nouveautés** (journal en direct, `mcp-docs` redémarré à la fin, ce qui rend l'étape 3 inutile). Ou en ligne de commande, le mode agent devant tourner. Seuls les fichiers nouveaux ou modifiés sont traités :
    ```bash
    docker compose exec mcp-docs python ingest.py
    ```

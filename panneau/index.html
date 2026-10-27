@@ -102,11 +102,23 @@ code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-si
 
   <h2>Modes rapides</h2>
   <div class="modes">
-    <button class="mode" data-mode="tout"><b>Tout démarrer</b><span>Chat, RAG, agent de code</span></button>
+    <button class="mode" data-mode="tout"><b>Tout démarrer</b><span>Chat, RAG, agent de code. Applique aussi les mises à jour (git pull)</span></button>
     <button class="mode" data-mode="chat"><b>Mode chat</b><span>LLM + Open WebUI seulement</span></button>
     <button class="mode" data-mode="agent"><b>Mode agent de code</b><span>LLM + recherche dans les normes</span></button>
     <button class="mode" data-mode="finetune"><b>Mode fine-tuning</b><span>Libère le GPU (vLLM arrêté)</span></button>
     <button class="mode" data-mode="rien"><b>Tout arrêter</b><span>Libère GPU et RAM, rien n'est perdu</span></button>
+  </div>
+
+  <h2>Documents (normes)</h2>
+  <div class="carte">
+    <div class="ligne"><div><h3>Recherche dans les normes</h3><div class="role" id="docs-dossier">…</div></div><span class="badge b-off" id="docs-badge">…</span></div>
+    <div class="meta">Après avoir ajouté ou modifié des documents : <b>Indexer</b>. Seuls les fichiers nouveaux ou modifiés sont traités, images comprises (transcrites par le modèle s'il lit les images). mcp-docs est redémarré à la fin.</div>
+    <div class="actions">
+      <button class="btn prim" data-index="nouveaux">Indexer les nouveautés</button>
+      <button class="btn" data-index="texte" title="Sans solliciter le LLM : les images restent en attente pour une prochaine indexation">Texte seul (rapide)</button>
+      <button class="btn" data-index="tout" title="Efface l'index et relit tous les documents : après une suppression de fichiers">Tout réindexer</button>
+      <button class="btn" id="docs-journal">Voir le journal</button>
+    </div>
   </div>
 
   <h2>Services Docker</h2>
@@ -160,8 +172,8 @@ opencode</pre><button class="btn">Copier</button></div>
   <details>
     <summary>Ajouter tes normes et documents internes (RAG)</summary>
     <div>
-      <p>Dépose tes PDF, DOCX, MD ou TXT dans <code>docs-internes/</code>, puis lance l'indexation (le mode agent doit tourner). Seuls les fichiers modifiés sont réindexés. Les tableaux Word sont convertis, et les images (tableaux, schémas, pages scannées) sont transcrites par le modèle s'il lit les images (modèle par défaut, VL). Redémarre <code>mcp-docs</code> après avoir ajouté des fichiers.</p>
-      <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py</pre><button class="btn">Copier</button></div>
+      <p>Dépose tes PDF, DOCX, MD ou TXT dans le dossier affiché dans la section <b>Documents</b> ci-dessus, puis clique sur <b>Indexer les nouveautés</b> (mcp-docs doit tourner). Seuls les fichiers modifiés sont réindexés. Les tableaux Word sont convertis, et les images (tableaux, schémas, pages scannées) sont transcrites par le modèle s'il lit les images (modèle par défaut, VL). En ligne de commande :</p>
+      <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py && docker compose restart mcp-docs</pre><button class="btn">Copier</button></div>
       <p>Pour tout réindexer :</p>
       <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py --reset</pre><button class="btn">Copier</button></div>
     </div>
@@ -217,6 +229,7 @@ $("#theme").onclick = () => {
 };
 
 function journal(titre, texte) {
+  delete $("#journal-titre").dataset.index;
   $("#journal-titre").textContent = titre;
   $("#journal-texte").textContent = texte || "(aucune sortie)";
   $("#journal").classList.add("ouvert");
@@ -291,6 +304,41 @@ async function rafraichir() {
   } catch (e) { $("#services").textContent = "Impossible de joindre le serveur du panneau."; }
 }
 
+// Indexation : tâche longue côté serveur, suivie en direct
+let suiviIndex = null;
+async function etatIndex(ouvrirJournal) {
+  try {
+    const d = await (await fetch("/api/indexation")).json();
+    $("#docs-dossier").textContent = d.dossier
+      ? `Dossier lu : ${d.dossier} · ${d.fichiers ?? "?"} fichier(s)`
+      : "Dossier des documents introuvable (mcp-docs non configuré ?)";
+    const [txt, cls] = d.en_cours ? ["Indexation en cours…", "b-warn"]
+      : d.ok === true ? ["Indexation terminée", "b-ok"] : d.ok === false ? ["Indexation en échec", "b-bad"] : ["Prêt", "b-off"];
+    $("#docs-badge").textContent = txt; $("#docs-badge").className = "badge " + cls;
+    document.querySelectorAll("[data-index]").forEach((b) => (b.disabled = d.en_cours));
+    const ouvert = $("#journal").classList.contains("ouvert") && $("#journal-titre").dataset.index === "1";
+    if (ouvrirJournal || ouvert) {
+      journal((d.titre || "Indexation") + (d.en_cours ? " : en cours" : d.ok === false ? " : échec" : d.ok ? " : terminée" : ""),
+        d.lignes || "Aucune indexation lancée depuis le démarrage du panneau.");
+      $("#journal-titre").dataset.index = "1";
+    }
+    clearTimeout(suiviIndex);
+    if (d.en_cours) suiviIndex = setTimeout(() => etatIndex(false), 2000);
+  } catch (e) { $("#docs-dossier").textContent = "Impossible de joindre le serveur du panneau."; }
+}
+document.querySelectorAll("[data-index]").forEach((b) => {
+  b.onclick = async () => {
+    if (b.dataset.index === "tout" && !confirm("Effacer l'index et relire tous les documents ? Avec les images, cela peut prendre des heures.")) return;
+    b.disabled = true;
+    const r = await fetch(`/api/indexer/${b.dataset.index}`, { method: "POST", headers: { "X-Panneau": "1" } });
+    const d = await r.json();
+    if (d.ok === false) journal("Indexation", d.sortie);
+    else etatIndex(true);
+  };
+});
+$("#docs-journal").onclick = () => etatIndex(true);
+$("#journal-fermer").addEventListener("click", () => delete $("#journal-titre").dataset.index);
+
 document.querySelectorAll(".mode").forEach((b) => {
   b.onclick = () => action(`/api/mode/${b.dataset.mode}`, `Mode : ${b.querySelector("b").textContent}`, b);
 });
@@ -303,6 +351,7 @@ document.querySelectorAll(".cmd button").forEach((b) => {
 });
 
 rafraichir();
+etatIndex(false);
 setInterval(rafraichir, 10000);
 </script>
 </body>

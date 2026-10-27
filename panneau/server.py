@@ -9,6 +9,7 @@ import os
 import subprocess
 import threading
 import urllib.request
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -47,19 +48,108 @@ MODES = {
 MODES = {nom: [s for s in svcs if s in SERVICES] for nom, svcs in MODES.items()}
 
 verrou = threading.Lock()  # une action docker à la fois
+verrou_index = threading.Lock()  # une indexation à la fois (longue : ne bloque pas les autres actions)
+indexation = {"en_cours": False, "titre": "", "ok": None, "lignes": []}
+OPTIONS_INDEX = {"nouveaux": [], "tout": ["--reset"], "texte": ["--sans-images"]}
 
 
 def lancer(cmd: list[str], timeout: int = 300, limite: int | None = 6000) -> dict:
     """Exécute une commande dans le dossier du projet ; `limite` tronque la sortie affichée."""
-    env = dict(os.environ, PATH=f"{Path.home()}/.local/bin:{os.environ.get('PATH', '')}")
     try:
-        r = subprocess.run(cmd, cwd=PROJET, capture_output=True, text=True, timeout=timeout, env=env)
+        r = subprocess.run(cmd, cwd=PROJET, capture_output=True, text=True, timeout=timeout, env=env_commandes())
         sortie = r.stdout + r.stderr
         return {"ok": r.returncode == 0, "sortie": sortie[-limite:] if limite else sortie}
     except subprocess.TimeoutExpired:
         return {"ok": False, "sortie": f"Délai dépassé ({timeout} s)"}
     except FileNotFoundError as e:
         return {"ok": False, "sortie": str(e)}
+
+
+def env_commandes() -> dict:
+    return dict(os.environ, PATH=f"{Path.home()}/.local/bin:{os.environ.get('PATH', '')}")
+
+
+def configs_modifiees(services: list[str]) -> list[str]:
+    """Services dont un fichier monté (Caddyfile, litellm.yaml…) a changé depuis leur démarrage.
+
+    `docker compose up -d` ne regarde que le docker-compose : il ne voit pas ces changements.
+    """
+    ids = lancer(["docker", "compose", "ps", "-q", *services], timeout=30, limite=None)["sortie"].split()
+    if not ids:
+        return []
+    r = lancer(["docker", "inspect", *ids], timeout=30, limite=None)
+    try:
+        conteneurs = json.loads(r["sortie"])
+    except ValueError:
+        return []
+    a_relancer = []
+    for c in conteneurs:
+        if not c["State"].get("Running"):
+            continue
+        debut = datetime.fromisoformat(c["State"]["StartedAt"][:19]).replace(tzinfo=timezone.utc).timestamp()
+        for m in c.get("Mounts", []):
+            source = Path(m.get("Source", ""))
+            if m.get("Type") == "bind" and source.is_file() and source.stat().st_mtime > debut:
+                a_relancer.append(c["Config"]["Labels"]["com.docker.compose.service"])
+                break
+    return a_relancer
+
+
+def demarrer(services: list[str]) -> dict:
+    """up -d avec reconstruction des images maison (mcp-docs), puis redémarrage des services dont la config a changé."""
+    r = lancer(["docker", "compose", "up", "-d", "--build", *services], timeout=1200)
+    sortie = r["sortie"]
+    if r["ok"]:
+        changes = configs_modifiees(services)
+        if changes:
+            sortie += f"\nConfiguration modifiée, redémarrage : {', '.join(changes)}\n"
+            r2 = lancer(["docker", "compose", "restart", *changes])
+            sortie += r2["sortie"]
+            return {"ok": r2["ok"], "sortie": sortie}
+    return {"ok": r["ok"], "sortie": sortie}
+
+
+def dossier_docs() -> dict:
+    """Dossier des documents vu par mcp-docs (/docs) et nombre de fichiers."""
+    r = lancer(["docker", "compose", "config", "--format", "json"], timeout=30, limite=None)
+    try:
+        volumes = json.loads(r["sortie"])["services"]["mcp-docs"].get("volumes", [])
+    except (ValueError, KeyError):
+        return {"dossier": None, "fichiers": None}
+    for v in volumes:
+        if v.get("target") == "/docs":
+            d = Path(v["source"])
+            fichiers = sum(1 for f in d.rglob("*") if f.is_file()) if d.is_dir() else None
+            return {"dossier": str(d), "fichiers": fichiers}
+    return {"dossier": None, "fichiers": None}
+
+
+def indexer(mode: str) -> None:
+    """Lance ingest.py dans mcp-docs (journal suivi en direct), puis redémarre mcp-docs pour la liste des documents."""
+    titres = {"nouveaux": "Indexation des documents nouveaux ou modifiés", "tout": "Réindexation complète",
+              "texte": "Indexation du texte seul (images en attente)"}
+    indexation.update(en_cours=True, titre=titres[mode], ok=None, lignes=[])
+    try:
+        p = subprocess.Popen(["docker", "compose", "exec", "-T", "mcp-docs", "python", "-u", "ingest.py", *OPTIONS_INDEX[mode]],
+                             cwd=PROJET, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_commandes())
+        for ligne in p.stdout:
+            indexation["lignes"].append(ligne.rstrip("\n"))
+            del indexation["lignes"][:-3000]
+        ok = p.wait() == 0
+        if ok:
+            indexation["lignes"].append("\nRedémarrage de mcp-docs (liste des documents à jour)…")
+            r = lancer(["docker", "compose", "restart", "mcp-docs"])
+            indexation["lignes"].append(r["sortie"].strip() or "ok")
+            ok = r["ok"]
+        else:
+            indexation["lignes"].append("\nÉchec. mcp-docs doit tourner (Tout démarrer ou mode agent).")
+        indexation["ok"] = ok
+    except Exception as e:
+        indexation["lignes"].append(f"Erreur : {e}")
+        indexation["ok"] = False
+    finally:
+        indexation["en_cours"] = False
+        verrou_index.release()
 
 
 def sonder(url: str | None) -> bool | None:
@@ -160,6 +250,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(corps)
         if self.path == "/api/etat":
             return self._json(200, {"services": etat_services(), "machine": etat_machine()})
+        if self.path == "/api/indexation":
+            return self._json(200, {**indexation, "lignes": "\n".join(indexation["lignes"][-400:]), **dossier_docs()})
         if self.path.startswith("/api/logs/"):
             nom = self.path.rsplit("/", 1)[-1]
             if nom not in SERVICES:
@@ -175,11 +267,18 @@ class Handler(BaseHTTPRequestHandler):
         if len(parties) != 3 or parties[0] != "api":
             return self._json(404, {"erreur": "introuvable"})
         _, action, cible = parties
+        if action == "indexer" and cible in OPTIONS_INDEX:
+            if not verrou_index.acquire(blocking=False):
+                return self._json(409, {"ok": False, "sortie": "Une indexation est déjà en cours."})
+            threading.Thread(target=indexer, args=(cible,), daemon=True).start()
+            return self._json(200, {"ok": True, "sortie": "Indexation lancée."})
         if not verrou.acquire(timeout=1):
             return self._json(409, {"ok": False, "sortie": "Une action est déjà en cours, patiente."})
         try:
             if action in ("demarrer", "arreter", "redemarrer") and cible in SERVICES:
-                cmd = {"demarrer": ["up", "-d"], "arreter": ["stop"], "redemarrer": ["restart"]}[action]
+                if action == "demarrer":
+                    return self._json(200, demarrer([cible]))
+                cmd = {"arreter": ["stop"], "redemarrer": ["restart"]}[action]
                 return self._json(200, lancer(["docker", "compose", *cmd, cible]))
             if action == "mode" and cible in MODES:
                 garder = MODES[cible]
@@ -188,7 +287,7 @@ class Handler(BaseHTTPRequestHandler):
                 if arreter:
                     sortie += lancer(["docker", "compose", "stop", *arreter])["sortie"]
                 if garder:
-                    r = lancer(["docker", "compose", "up", "-d", *garder])
+                    r = demarrer(garder)
                     sortie += r["sortie"]
                     return self._json(200, {"ok": r["ok"], "sortie": sortie})
                 return self._json(200, {"ok": True, "sortie": sortie})
