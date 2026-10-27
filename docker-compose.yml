@@ -128,8 +128,9 @@ services:
       RAG_EMBEDDING_MODEL: bge-m3
       RAG_OPENAI_API_BASE_URL: http://litellm:4000/v1
       RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
-      # Outil de recherche dans les normes (MCP), déclaré d'office
-      TOOL_SERVER_CONNECTIONS: '[{"type":"mcp","url":"http://mcp-docs:9901/mcp","auth_type":"none","key":"","config":{"enable":true},"info":{"id":"docs-internes","name":"docs-internes","description":"Recherche dans les normes internes (ISO 7816, ISO 14443, GlobalPlatform)"}}]'
+      # Outil de recherche dans les normes (MCP), déclaré d'office et ouvert à tous les comptes
+      # (sans access_grants, Open WebUI le réserve aux admins). Lu au premier démarrage seulement : ensuite, la base fait foi.
+      TOOL_SERVER_CONNECTIONS: '[{"type":"mcp","url":"http://mcp-docs:9901/mcp","auth_type":"none","key":"","config":{"enable":true,"access_grants":[{"principal_type":"user","principal_id":"*","permission":"read"}]},"info":{"id":"docs-internes","name":"docs-internes","description":"Recherche dans les normes internes (ISO 7816, ISO 14443, GlobalPlatform)"}}]'
     volumes: ["open-webui:/app/backend/data"]
     ports: ["0.0.0.0:3000:8080"]
     depends_on: [litellm, qdrant]

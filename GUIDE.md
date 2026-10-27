@@ -273,7 +273,21 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 
 1. Lance le *Mode chat* depuis le panneau, puis ouvre http://localhost:3000.
 2. Crée ton compte. Le premier compte créé devient administrateur.
-3. Pour que le chat puisse chercher dans les normes : Réglages admin → Outils externes → ajoute le serveur MCP `http://mcp-docs:9901/mcp`.
+3. La recherche dans les normes (`docs-internes`) est déclarée d'office et ouverte à tous les comptes. Sur une installation antérieure à ce réglage, elle n'est visible que des admins : l'ouvrir à tous avec
+   ```bash
+   docker compose exec open-webui python3 -c "
+   import sqlite3, json
+   db = sqlite3.connect('/app/backend/data/webui.db')
+   (v,) = db.execute(\"select value from config where key='tool_server.connections'\").fetchone()
+   conns = json.loads(v)
+   for c in conns:
+       if (c.get('info') or {}).get('id') == 'docs-internes':
+           c.setdefault('config', {})['access_grants'] = [{'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}]
+   db.execute(\"update config set value=? where key='tool_server.connections'\", (json.dumps(conns),))
+   db.commit()
+   "
+   docker compose restart open-webui
+   ```
 
 ---
 
