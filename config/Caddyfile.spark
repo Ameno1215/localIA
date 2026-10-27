@@ -1,6 +1,7 @@
 # Proxy HTTPS du Spark (⚠ non testé). Seul point d'accès depuis le réseau de l'équipe.
 #   https://<SPARK_HOSTNAME>/v1/...  -> LiteLLM (clé personnelle de chaque développeur)
 #   https://<SPARK_HOSTNAME>/mcp     -> recherche dans les normes (jeton d'équipe MCP_TOKEN)
+#   https://<SPARK_HOSTNAME>/x/…     -> sources citées dans les réponses : l'extrait, puis /docs/… le PDF (lecture seule)
 #   https://<SPARK_HOSTNAME>:8443    -> Open WebUI (chat web, comptes personnels)
 {$SPARK_HOSTNAME} {
 	tls internal
@@ -11,6 +12,12 @@
 			reverse_proxy mcp-docs:9901
 		}
 		respond "jeton MCP manquant ou invalide" 401
+	}
+
+	# Liens « Sources » des réponses, ouverts par le navigateur (pas de jeton possible) : réseau interne seulement
+	@sources path /x/* /extrait/* /docs/*
+	handle @sources {
+		reverse_proxy mcp-docs:9901
 	}
 
 	handle {

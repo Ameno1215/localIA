@@ -88,6 +88,8 @@ services:
     environment:
       OUTILS_CODE: "0"
       RAG_BACKEND: vllm
+      # Adresse des liens « Sources » vue par le navigateur des utilisateurs (via Caddy)
+      DOCS_PUBLIC_URL: https://${SPARK_HOSTNAME}
     ports: !reset []
     volumes: !override
       # DOCS_DIR dans .env pour lire les normes ailleurs (ex. ./docs-internes, le dossier du projet)
