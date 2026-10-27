@@ -90,7 +90,8 @@ services:
       RAG_BACKEND: vllm
     ports: !reset []
     volumes: !override
-      - ${WS_DIR:-./ws}/docs-internes:/docs:ro
+      # DOCS_DIR dans .env pour lire les normes ailleurs (ex. ./docs-internes, le dossier du projet)
+      - ${DOCS_DIR:-${WS_DIR:-./ws}/docs-internes}:/docs:ro
       - ${WS_DIR:-./ws}/workspace:/workspace
       - ./finetune:/finetune:ro
       - ${WS_DIR:-./ws}/data:/data

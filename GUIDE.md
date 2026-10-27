@@ -233,7 +233,7 @@ docker compose logs -f mcp-docs
 
 ## 5. Les normes et documents internes (RAG)
 
-1. **Ajoute tes documents.** Dépose les fichiers (PDF, DOCX, MD, TXT) dans `docs-internes/`. Les sous-dossiers sont acceptés.
+1. **Ajoute tes documents.** Dépose les fichiers (PDF, DOCX, MD, TXT) dans `docs-internes/` (sur le Spark : `WS_DIR/docs-internes/`, ou le dossier choisi par `DOCS_DIR` dans `.env`). Les sous-dossiers sont acceptés.
 2. **Lance l'indexation.** Le mode agent doit tourner. Seuls les fichiers nouveaux ou modifiés sont traités :
    ```bash
    docker compose exec mcp-docs python ingest.py
@@ -494,6 +494,7 @@ IA locale/
 | `VLLM_EXTRA_ARGS` | Options vLLM propres au modèle |
 | `VLLM_LORA_ARGS` | Active l'adaptateur `normes` (vide tant qu'il n'est pas entraîné) |
 | `WS_DIR` | Spark uniquement : dossier des données des conteneurs (modèles, caches, bases, documents) |
+| `DOCS_DIR` | Spark uniquement : dossier des normes indexées (défaut `WS_DIR/docs-internes`). `./docs-internes` = le dossier du projet |
 | `VLLM_IMAGE` | Spark uniquement : image Docker de vLLM |
 | `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
 | `MCP_OUTILS_CODE` | 0 (défaut) : seulement la recherche dans les normes. 1 : ajoute des outils fichiers/commandes sur `workspace/` |
