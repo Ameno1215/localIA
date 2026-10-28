@@ -80,6 +80,9 @@ services:
       COLLECTION: docs_internes
       WORKSPACE: /workspace
       OUTILS_CODE: ${MCP_OUTILS_CODE:-0}
+      # Transcription des images à l'indexation, par le LLM (sur un autre serveur : voir SPARK-DUO.md)
+      VISION_URL: ${VLLM_API_BASE:-http://vllm:8000/v1}
+      VISION_API_KEY: ${VLLM_API_KEY:-}
     volumes:
       - ./docs-internes:/docs:ro
       - ./workspace:/workspace
@@ -97,6 +100,9 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
       STORE_MODEL_IN_DB: "False"
+      # Adresse et clé de vLLM, lues par config/litellm.yaml (vLLM sur une autre machine : voir SPARK-DUO.md)
+      VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm:8000/v1}
+      VLLM_API_KEY: ${VLLM_API_KEY:-none}
     volumes: ["./config/litellm.yaml:/app/config.yaml:ro"]
     ports: ["127.0.0.1:4000:4000"]
     depends_on: [postgres]

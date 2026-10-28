@@ -1,0 +1,43 @@
+# Deux DGX Spark reliés par le câble QSFP : UN modèle réparti sur les deux (vLLM + Ray, tensor parallel 2).
+# Ce fichier = le Spark 1 (tête). Le Spark 2 lance docker-compose.spark-worker.yml.  ⚠ NON TESTÉ : voir SPARK-DUO.md.
+#
+#   Dans le .env du Spark 1 :  COMPOSE_FILE=docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml
+#   puis (Spark 2 démarré ou non, la tête l'attend) :  docker compose up -d
+#
+# vLLM passe sur le réseau de l'hôte (obligatoire pour Ray et NCCL sur le lien direct). Il écoute donc sur toutes
+# les interfaces du Spark : fixer VLLM_API_KEY et le pare-feu (SPARK-DUO.md, étape 5).
+
+x-reseau-duo: &reseau-duo
+  VLLM_HOST_IP: ${DUO_IP_TETE}
+  # Lien direct : NCCL (RDMA/RoCE si possible, sinon TCP), Gloo et UCX passent par l'interface du câble
+  NCCL_SOCKET_IFNAME: ${DUO_INTERFACE}
+  GLOO_SOCKET_IFNAME: ${DUO_INTERFACE}
+  TP_SOCKET_IFNAME: ${DUO_INTERFACE}
+  UCX_NET_DEVICES: ${DUO_INTERFACE}
+  NCCL_IB_HCA: ${DUO_HCA}
+  NCCL_IB_DISABLE: "0"
+  # INFO pour vérifier que NCCL utilise bien le câble : « NET/IB : Using [0]rocep… » (et non « NET/Socket »)
+  NCCL_DEBUG: ${DUO_NCCL_DEBUG:-WARN}
+  # Ray tue des processus quand la mémoire « semble » pleine : faux positifs avec la mémoire unifiée du Spark
+  RAY_memory_monitor_refresh_ms: "0"
+  DUO_IP_TETE: ${DUO_IP_TETE}
+  DUO_RAY_PORT: ${DUO_RAY_PORT:-6379}
+
+services:
+  vllm:
+    network_mode: host
+    ports: !reset []
+    entrypoint: ["bash", "/duo/tete.sh"]
+    environment:
+      <<: *reseau-duo
+    devices: ["/dev/infiniband:/dev/infiniband"]
+    cap_add: [IPC_LOCK]
+    volumes:
+      - ./scripts/spark-duo:/duo:ro
+
+  # vLLM n'est plus sur le réseau Docker : « vllm » désigne désormais l'hôte (même adresse, même port)
+  litellm:
+    extra_hosts: ["vllm:host-gateway"]
+
+  mcp-docs:
+    extra_hosts: ["vllm:host-gateway"]

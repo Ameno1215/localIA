@@ -1,0 +1,52 @@
+# Spark 2 d'un duo (voir docker-compose.spark-duo.yml et SPARK-DUO.md) : prête son GPU au vLLM du Spark 1.  ⚠ NON TESTÉ
+#
+#   Même projet, même .env que le Spark 1, sauf :  COMPOSE_FILE=docker-compose.spark-worker.yml
+#   Mêmes poids (WS_DIR/models/<VLLM_MODEL>), même image (VLLM_IMAGE), même .env.vllm que le Spark 1.
+#   docker compose up -d
+#
+# Seul ce conteneur tourne ici : pas de LiteLLM, d'Open WebUI ni d'embeddings, toute la mémoire va au modèle.
+
+services:
+  ray-worker:
+    image: ${VLLM_IMAGE}
+    entrypoint: ["bash", "/duo/worker.sh"]
+    network_mode: host
+    ipc: host
+    shm_size: 16g
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    devices: ["/dev/infiniband:/dev/infiniband"]
+    cap_add: [IPC_LOCK]
+    # Variables propres au modèle : les processus vLLM lancés ici par Ray doivent voir les mêmes que la tête
+    env_file:
+      - path: .env.vllm
+        required: false
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      VLLM_HOST_IP: ${DUO_IP_WORKER}
+      NCCL_SOCKET_IFNAME: ${DUO_INTERFACE}
+      GLOO_SOCKET_IFNAME: ${DUO_INTERFACE}
+      TP_SOCKET_IFNAME: ${DUO_INTERFACE}
+      UCX_NET_DEVICES: ${DUO_INTERFACE}
+      NCCL_IB_HCA: ${DUO_HCA}
+      NCCL_IB_DISABLE: "0"
+      NCCL_DEBUG: ${DUO_NCCL_DEBUG:-WARN}
+      RAY_memory_monitor_refresh_ms: "0"
+      DUO_IP_TETE: ${DUO_IP_TETE}
+      DUO_IP_WORKER: ${DUO_IP_WORKER}
+      DUO_RAY_PORT: ${DUO_RAY_PORT:-6379}
+    # Mêmes chemins que sur le Spark 1 : Ray y lance des processus vLLM qui relisent /models/<VLLM_MODEL>
+    volumes:
+      - ${WS_DIR:-./ws}/models:/models:ro
+      - ${WS_DIR:-./ws}/loras:/loras:ro
+      - ${WS_DIR:-./ws}/cache/vllm:/root/.cache/vllm
+      - ${WS_DIR:-./ws}/cache/flashinfer:/root/.cache/flashinfer
+      - ${WS_DIR:-./ws}/cache/triton:/root/.triton
+      - ./scripts/spark-duo:/duo:ro
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    restart: unless-stopped

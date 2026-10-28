@@ -407,7 +407,8 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 
 ### Plus tard
 
-- **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
+- **Deuxième Spark :** deux façons de s'en servir, détaillées dans [SPARK-DUO.md](SPARK-DUO.md). Soit un modèle complet sur chaque Spark (décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`, LiteLLM répartit la charge), soit un seul modèle plus gros réparti sur les deux, reliés par le câble QSFP.
+- **Serveur annexe :** LiteLLM, Open WebUI, embeddings, bases et MCP peuvent tourner sur une machine x86 sans GPU, pour rendre 15 à 20 Go de mémoire au modèle ([SPARK-DUO.md](SPARK-DUO.md), étape 6).
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
 - **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec Nemotron Super. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
 
@@ -502,6 +503,8 @@ IA locale/
 | `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
 | `MCP_OUTILS_CODE` | 0 (défaut) : seulement la recherche dans les normes. 1 : ajoute des outils fichiers/commandes sur `workspace/` |
 | `SPARK_HOSTNAME`, `MCP_TOKEN` | Spark uniquement : nom du serveur et jeton d'équipe pour les normes |
+| `VLLM_API_KEY`, `VLLM_ECOUTE`, `VLLM_API_BASE` | vLLM joignable par le réseau (serveur annexe, duo) : clé, interface d'écoute, adresse vue par LiteLLM. Voir SPARK-DUO.md |
+| `DUO_*` | Duo de Spark : interface et carte du câble, adresses des deux Spark. Voir SPARK-DUO.md |
 
 ### Fichiers sur chaque poste (créés par `installer-opencode.sh`)
 
