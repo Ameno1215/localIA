@@ -13,6 +13,7 @@ Elle tourne aujourd'hui sur un PC de test (RTX 8 Go) et est prête à passer sur
 |---|---|
 | [GUIDE.md](GUIDE.md) | Comprendre et utiliser la plateforme |
 | [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) | **Tester sur le DGX Spark**, pas à pas (branche `spark`) |
+| [SPARK-DUO.md](SPARK-DUO.md) | Relier deux Spark pour un modèle plus gros, et déplacer les services sur un serveur annexe (non testé) |
 | [AUDIT-NVIDIA.md](AUDIT-NVIDIA.md) | Écarts avec les tutoriels et recettes officiels NVIDIA, et corrections faites |
 
 ## Démarrage rapide

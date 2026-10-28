@@ -49,6 +49,9 @@ services:
     env_file:
       - path: .env.vllm
         required: false
+    # Clé exigée par vLLM sur /v1 (vide = aucune) : indispensable dès que vLLM écoute sur le réseau (SPARK-DUO.md)
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
     # Pas de VLLM_USE_RUST_FRONTEND : le frontend Rust refuse --media-io-kwargs / --mm-processor-cache-gb (profil Nemotron)
     # et ignore --enable-auto-tool-choice (appels d'outils cassés). Les recettes NVIDIA gardent le frontend Python.
     # Contrôle de santé sans curl (absent de certaines images) ; un gros modèle met longtemps à charger
@@ -69,8 +72,9 @@ services:
       - ${WS_DIR:-./ws}/cache/vllm:/root/.cache/vllm
       - ${WS_DIR:-./ws}/cache/flashinfer:/root/.cache/flashinfer
       - ${WS_DIR:-./ws}/cache/triton:/root/.triton
+    # VLLM_ECOUTE=0.0.0.0 (avec VLLM_API_KEY) quand LiteLLM tourne sur un serveur annexe
     ports: !override
-      - "127.0.0.1:8000:8000"
+      - "${VLLM_ECOUTE:-127.0.0.1}:8000:8000"
 
   tei-embed:
     <<: *vllm-pooling
