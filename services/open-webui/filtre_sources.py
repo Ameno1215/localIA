@@ -1,12 +1,13 @@
 """
 title: Sources docs-internes
-description: Remplace les références [a1b2c3d4] écrites par le modèle par des liens numérotés vers les extraits, et ajoute la liste des sources.
-version: 0.1
+description: Remplace les références [a1b2c3d4] écrites par le modèle par des liens numérotés qui ouvrent le document à la bonne page, et ajoute la liste des sources.
+version: 0.2
 """
 
 # À installer dans Open WebUI : Panneau d'administration > Fonctions > + (coller ce fichier),
-# puis activer la fonction et la rendre « Globale ». Le modèle n'écrit jamais d'URL :
-# il recopie seulement des références courtes, que ce filtre résout auprès de mcp-docs.
+# puis activer la fonction et la rendre « Globale ». Le modèle recopie des références courtes,
+# que ce filtre résout auprès de mcp-docs ; la section « Sources » qu'il écrit (utile sans filtre,
+# dans OpenCode) est remplacée par la nôtre, aux liens vérifiés.
 
 import re
 
@@ -55,10 +56,15 @@ class Filter:
                 sortie += f"[[{numeros[c]}]]({infos[c]['url']})" if c in numeros else "[réf. inconnue]"
             return sortie
 
-        sources = "\n\n**Sources**\n\n" + "\n".join(
-            f"{n}. [{infos[c]['source']}" + (f", p.{infos[c]['page']}" if infos[c].get("page") else "") + f"]({infos[c]['url']})"
-            for c, n in numeros.items()
-        )
+        def source(c: str, n: int) -> str:
+            i = infos[c]
+            ligne = f"{n}. [{i['source']}" + (f", p.{i['page']}" if i.get("page") else "") + f"]({i['url']})"
+            # Le lien principal ouvre le PDF à la page ; l'extrait reste accessible à côté
+            if i.get("extrait") and i["extrait"] != i["url"]:
+                ligne += f" · [extrait]({i['extrait']})"
+            return ligne
+
+        sources = "\n\n**Sources**\n\n" + "\n".join(source(c, n) for c, n in numeros.items())
 
         def reecrire(texte: str, avec_sources: bool) -> str:
             sections = list(SECTION_SOURCES.finditer(texte))

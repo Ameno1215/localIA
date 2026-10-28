@@ -223,6 +223,8 @@ Exemple réel sur le PC de test (projet `~/projets/jeu-test`) :
 
 OpenCode a accès à l'outil `rechercher_docs`. Le fichier `AGENTS.md` lui demande de s'en servir dès qu'une question touche une norme. Tu peux aussi le demander explicitement : « Cherche dans nos normes ce qui concerne la journalisation, puis vérifie si `jeu.py` les respecte ».
 
+Chaque réponse se termine par une section **Sources** : une ligne par extrait cité, avec un lien. Pour un PDF, le lien ouvre le document directement à la bonne page (`…/docs/norme.pdf#page=12`) ; pour les autres formats, il ouvre l'extrait utilisé. Dans le terminal, Ctrl+clic (Cmd+clic sur Mac) sur le lien l'ouvre dans le navigateur.
+
 Pour voir les recherches qu'il fait réellement :
 
 ```bash
@@ -288,6 +290,7 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
    "
    docker compose restart open-webui
    ```
+4. **Sources cliquables (admin, une fois).** Installe le filtre `services/open-webui/filtre_sources.py` : *Panneau d'administration > Fonctions > +*, colle le contenu du fichier, enregistre, puis active la fonction et rends-la **Globale** (menu ⋯). Les références `[a1b2c3d4]` des réponses deviennent des liens numérotés `[1]`, `[2]`… suivis de la liste des sources. Un clic ouvre, dans un nouvel onglet, le PDF à la bonne page (ou l'extrait pour un Word ou un texte) ; le lien « extrait » à côté montre le passage exact utilisé. Après une mise à jour du fichier, recolle-le à la place de l'ancien.
 
 ---
 
