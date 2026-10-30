@@ -357,6 +357,12 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
    ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 262144 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
    ```
 
+   **Poste Windows** (PowerShell, OpenCode installé avec winget, ou Node.js 20+ pour que le script l'installe), depuis une copie de ce dossier :
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\installer-opencode.ps1 -Serveur https://spark1.lan -Contexte 262144 -JetonMcp <jeton> -Ca E:\spark-ca.crt
+   ```
+   Le script ajoute aussi le certificat aux certificats de confiance de Windows. Si `spark1.lan` est inconnu du poste, ajoute `<ip-du-spark> spark1.lan` à `C:\Windows\System32\drivers\etc\hosts` (PowerShell en administrateur). Pour tester à la main, `curl.exe` a besoin de `--ssl-no-revoke` : le certificat interne de Caddy ne publie pas de liste de révocation.
+
 C'est la seule différence avec le PC de test : `opencode` s'utilise exactement de la même façon.
 
 ### Tester d'autres modèles
@@ -469,6 +475,7 @@ IA locale/
     ├── modeles.py              modèles du Spark : chercher, ajouter, utiliser (profils)
     ├── creer-cle-utilisateur.sh    clé LiteLLM pour une personne
     ├── installer-opencode.sh   OpenCode sur un poste
+    ├── installer-opencode.ps1  la même chose sur un poste Windows
     └── panneau.sh              lance le panneau web
 ```
 
