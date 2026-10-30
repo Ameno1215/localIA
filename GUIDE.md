@@ -357,7 +357,7 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
    ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 262144 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
    ```
 
-   **Poste Windows** (PowerShell, Node.js 20+ installé avec `winget install OpenJS.NodeJS.LTS`), depuis une copie de ce dossier :
+   **Poste Windows** (PowerShell, OpenCode installé avec winget, ou Node.js 20+ pour que le script l'installe), depuis une copie de ce dossier :
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\installer-opencode.ps1 -Serveur https://spark1.lan -Contexte 262144 -JetonMcp <jeton> -Ca E:\spark-ca.crt
    ```

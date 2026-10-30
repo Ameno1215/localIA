@@ -28,18 +28,15 @@ function Enregistrer($Nom, $Valeur) {
   Set-Item "env:$Nom" $Valeur
 }
 
-Write-Host "==> Node.js"
-if (-not (Get-Command node.exe -ErrorAction SilentlyContinue) -or [int](node.exe -p "process.versions.node.split('.')[0]") -lt 20) {
-  Write-Host "Node.js >= 20 est requis. Installe-le (winget install OpenJS.NodeJS.LTS), rouvre PowerShell, puis relance ce script."
-  exit 1
+Write-Host "==> OpenCode"
+# Déjà installé (par winget ou npm) : on le garde
+if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+  if (-not (Get-Command node.exe -ErrorAction SilentlyContinue) -or [int](node.exe -p "process.versions.node.split('.')[0]") -lt 20) {
+    Write-Host "Installe OpenCode (winget) ou Node.js >= 20 (winget install OpenJS.NodeJS.LTS), rouvre PowerShell, puis relance ce script."
+    exit 1
+  }
+  npm.cmd install -g "opencode-ai@$VersionOpencode"
 }
-node.exe --version
-
-Write-Host "==> OpenCode $VersionOpencode"
-$Actuelle = ""
-if (Get-Command opencode.cmd -ErrorAction SilentlyContinue) { try { $Actuelle = opencode.cmd --version } catch {} }
-if ($Actuelle -ne $VersionOpencode) { npm.cmd install -g "opencode-ai@$VersionOpencode" }
-opencode.cmd --version
 if (-not (Get-Command rg.exe -ErrorAction SilentlyContinue)) {
   Write-Host "   Conseil : installe ripgrep (winget install BurntSushi.ripgrep.MSVC), sinon OpenCode le télécharge."
 }
