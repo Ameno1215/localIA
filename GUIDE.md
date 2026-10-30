@@ -407,6 +407,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 
 ### Plus tard
 
+- **Serveur annexe :** le Spark ne fait tourner que vLLM, et un serveur x86 sans GPU porte LiteLLM, Open WebUI, les embeddings, les bases et le MCP. Le modèle récupère 15 à 20 Go de mémoire. Voir [SPARK-SERVEUR.md](SPARK-SERVEUR.md).
 - **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
 - **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec Nemotron Super. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
@@ -502,6 +503,7 @@ IA locale/
 | `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
 | `MCP_OUTILS_CODE` | 0 (défaut) : seulement la recherche dans les normes. 1 : ajoute des outils fichiers/commandes sur `workspace/` |
 | `SPARK_HOSTNAME`, `MCP_TOKEN` | Spark uniquement : nom du serveur et jeton d'équipe pour les normes |
+| `VLLM_API_KEY`, `VLLM_API_BASE` | Spark dédié au modèle + serveur annexe : clé exigée par vLLM, adresse de vLLM vue par le serveur. Voir SPARK-SERVEUR.md |
 
 ### Fichiers sur chaque poste (créés par `installer-opencode.sh`)
 
