@@ -1,0 +1,24 @@
+# Spark dédié au modèle : seul vLLM tourne ici, le reste est sur le serveur annexe (docker-compose.serveur.yml).
+# ⚠ NON TESTÉ : voir SPARK-SERVEUR.md.
+#
+#   Dans le .env du Spark :  COMPOSE_FILE=docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-inference.yml
+#   docker compose up -d          (ne démarre que vLLM ; le panneau web ne montre plus que lui)
+#
+# vLLM écoute alors sur le réseau (port 8000) : VLLM_API_KEY est obligatoire, et le pare-feu limite le port au serveur.
+
+services:
+  vllm:
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:?VLLM_API_KEY obligatoire quand vLLM écoute sur le réseau (openssl rand -hex 16)}
+    ports: !override
+      - "8000:8000"
+
+  # Services du serveur annexe : jamais démarrés sur ce Spark (profil jamais activé ici)
+  postgres: { profiles: ["serveur"] }
+  litellm: { profiles: ["serveur"] }
+  qdrant: { profiles: ["serveur"] }
+  tei-embed: { profiles: ["serveur"] }
+  tei-rerank: { profiles: ["serveur"] }
+  mcp-docs: { profiles: ["serveur"] }
+  open-webui: { profiles: ["serveur"] }
+  caddy: { profiles: ["serveur"] }

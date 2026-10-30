@@ -44,7 +44,9 @@ CONSIGNE_IMAGE = """Cette image est extraite d'un document technique interne. Tr
 Ne résume pas, n'invente rien, n'ajoute aucun commentaire.
 Si l'image n'apporte aucune information (logo, décoration, photo d'illustration), réponds seulement : RIEN"""
 
-llm = httpx.Client(base_url=VISION_URL, timeout=600)
+# Clé de vLLM, si vLLM en exige une (vLLM sur une autre machine que l'indexation)
+_cle = os.environ.get("VISION_API_KEY")
+llm = httpx.Client(base_url=VISION_URL, timeout=600, headers={"Authorization": f"Bearer {_cle}"} if _cle else None)
 _vision = None  # None : pas encore testé
 _transcriptions = {}  # empreinte de l'image -> texte (logos et images répétés : un seul appel)
 
