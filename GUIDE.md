@@ -348,6 +348,14 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
 
 ### Côté postes (chaque développeur)
 
+0. **Fais connaître le nom du Spark au poste** (`spark1.lan` dans les exemples). Sans ça, le chat marche par l'adresse IP, mais les liens des sources (`https://spark1.lan/docs/…`), OpenCode et le MCP échouent avec « DNS address could not be found ». L'adresse IP du Spark s'obtient sur le Spark avec `hostname -I | cut -d' ' -f1`.
+   - **Pour toute l'équipe (recommandé) :** ajoute une entrée dans le DNS local de la box ou du routeur (souvent « DNS local », « hôte statique » ou « static host ») : `spark1.lan` → l'IP du Spark. Donne aussi une IP fixe au Spark (bail DHCP réservé), sinon l'entrée devient fausse au prochain changement d'adresse.
+   - **Sinon, poste par poste :** ajoute la ligne `192.168.x.x   spark1.lan` (l'IP du Spark) au fichier hosts :
+     - Linux / Mac : `sudo nano /etc/hosts`
+     - Windows : Bloc-notes lancé en administrateur, fichier `C:\Windows\System32\drivers\etc\hosts`
+   - **Vérifie** depuis le poste : `ping spark1.lan` doit répondre avec l'IP du Spark.
+
+   Mettre l'IP à la place du nom dans les liens ne suffit pas : Caddy ne répond qu'aux requêtes adressées à `spark1.lan`.
 1. **Crée sa clé** sur le Spark :
    ```bash
    ./scripts/creer-cle-utilisateur.sh prenom.nom
@@ -429,6 +437,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
 | Un tableau ou un schéma en image n'est pas trouvé | Image non transcrite : modèle sans vision, ou `ingest.py` lancé avant | Relancer `docker compose exec mcp-docs python ingest.py` avec le modèle par défaut (VL) : les images « en attente » sont reprises |
 | Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis relancer avec `docker compose up -d vllm`. Si ça ne suffit pas : repli sur `./scripts/modeles.py utiliser qwen3.6-35b-a3b-nvfp4`. Les pannes probables sont détaillées dans [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md), section 8 |
+| Depuis un poste, un lien des sources (`https://spark1.lan/docs/…`) affiche « DNS address could not be found », alors qu'il marche sur le Spark | Le poste ne connaît pas le nom du Spark | DNS local du routeur, ou ligne dans le fichier hosts du poste : section 8, « Côté postes », étape 0 |
 | Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---
