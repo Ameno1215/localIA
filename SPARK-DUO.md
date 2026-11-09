@@ -2,6 +2,8 @@
 
 > ⚠ **Rien de ce document n'a encore tourné sur les Spark.** Les réglages suivent le playbook NVIDIA « Connect two Sparks » et la documentation multi-nœud de vLLM (Ray). Vérifie chaque étape avant de passer à la suivante.
 
+**Pour tester le duo sans casser l'installation actuelle à 1 Spark : section « Tester le duo sans toucher à l'installation 1 Spark », juste après le tableau ci-dessous.**
+
 Deux évolutions indépendantes, combinables :
 
 1. **Relier les deux Spark** par le câble QSFP pour servir **un seul modèle réparti sur les deux** (environ 2 × 110 Go utilisables).
@@ -18,6 +20,128 @@ Deux évolutions indépendantes, combinables :
 | Mise en place | Ray, NCCL, réseau : ce document | décommenter la 2e entrée `qwen-local` de `config/litellm.yaml` |
 
 Le duo sert à **faire tenir un modèle plus capable**, pas à aller plus vite. Si le modèle actuel suffit et que l'équipe attend son tour, deux modèles indépendants derrière LiteLLM valent mieux.
+
+## Tester le duo sans toucher à l'installation « 1 Spark » (deux dossiers)
+
+Façon la plus sûre de tester : on ne change pas de branche dans le dossier qui marche. On clone le dépôt une deuxième fois, sur la branche `spark-duo`, dans un autre dossier. Les deux dossiers partagent les **mêmes données** (modèles, comptes, clés, index), mais **un seul tourne à la fois**.
+
+Dans la suite, les chemins sont des exemples à adapter :
+
+| | Spark 1 | Spark 2 |
+|---|---|---|
+| Dossier actuel (1 Spark, on n'y touche pas) | `/home/data/ws/ia-locale` | (aucun) |
+| Nouveau dossier (duo) | `/home/data/ws/ia-locale-duo` | `/home/data/ws/ia-locale-duo` |
+| Données (`WS_DIR`) | `/home/data/ws` (**le même** pour les deux dossiers) | `/home/data/ws` (le sien, sur le Spark 2) |
+| IP sur le câble | `192.168.100.10` | `192.168.100.11` |
+
+### Pourquoi deux dossiers ne se gênent pas (et la seule règle à respecter)
+
+- Docker Compose nomme le projet d'après le **nom du dossier** : `ia-locale` et `ia-locale-duo` sont deux projets distincts, avec leurs propres conteneurs (`ia-locale-vllm-1`, `ia-locale-duo-vllm-1`…). Un `docker compose down` dans un dossier n'arrête **pas** l'autre.
+- Les deux projets publient les mêmes ports (443, 8443, 3000, 4000, 8000…) et écrivent dans les mêmes bases (Postgres, Qdrant, Open WebUI). **Règle : arrêter l'un avant de démarrer l'autre.** Deux Postgres sur le même dossier de données l'abîmeraient.
+- Les données ne sont pas dans le dossier du projet mais dans `WS_DIR` : les deux dossiers retrouvent les mêmes modèles, comptes Open WebUI, clés LiteLLM, index des normes et certificat Caddy (les postes n'ont rien à changer).
+
+### Ce qui diffère entre les deux dossiers
+
+Seuls deux fichiers non suivis par git sont à recopier puis modifier : `.env` et `.env.vllm`.
+
+| Réglage | Dossier 1 Spark (`ia-locale`) | Dossier duo, Spark 1 | Dossier duo, Spark 2 |
+|---|---|---|---|
+| Branche | `spark` | `spark-duo` | `spark-duo` |
+| `COMPOSE_FILE` | `docker-compose.yml:docker-compose.spark.yml` | `docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml` | `docker-compose.spark-worker.yml` |
+| `WS_DIR` | `/home/data/ws` | `/home/data/ws` (**chemin absolu**, le même) | `/home/data/ws` (sur le Spark 2) |
+| `VLLM_API_KEY` | vide | une clé (`openssl rand -hex 16`) | la même clé |
+| `DUO_INTERFACE`, `DUO_HCA`, `DUO_IP_TETE`, `DUO_IP_WORKER` | absents | remplis | remplis, **identiques** au Spark 1 |
+| `VLLM_GPU_UTIL` | valeur du profil (0.74) | la même pour commencer | (lue sur le Spark 1) |
+| `.env.vllm` | celui du profil | copie de celui du dossier 1 Spark | copie de celui du Spark 1 |
+| Secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `WEBUI_SECRET_KEY`, `MCP_TOKEN`), `SPARK_HOSTNAME` | les vôtres | **identiques** (sinon les clés et comptes existants ne marchent plus) | sans effet (rien ne les utilise) |
+
+⚠ **`WS_DIR` doit être un chemin absolu.** Avec `WS_DIR=./ws` (relatif), le dossier duo chercherait ses données dans `ia-locale-duo/ws` : vide, donc pas de modèle, pas de comptes, pas de clés. Vérifier d'abord la valeur actuelle : `grep WS_DIR /home/data/ws/ia-locale/.env`. Si elle est relative, mettre dans le dossier duo le chemin absolu qui lui correspond (ex. `/home/data/ws/ia-locale/ws`).
+
+### Pas à pas
+
+**Spark 1 : préparer le dossier duo** (l'installation actuelle continue de tourner pendant ce temps)
+
+```bash
+cd /home/data/ws
+git clone -b spark-duo https://github.com/Ameno1215/localIA.git ia-locale-duo
+cd ia-locale-duo
+cp ../ia-locale/.env ../ia-locale/.env.vllm .
+chmod 600 .env
+nano .env
+```
+
+Dans ce `.env`, modifier ou ajouter (le bloc « Duo » est en bas de `.env.spark.example`, à recopier s'il manque) :
+
+```bash
+WS_DIR=/home/data/ws
+COMPOSE_FILE=docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml
+VLLM_API_KEY=<résultat de : openssl rand -hex 16>
+DUO_INTERFACE=enp1s0f0np0      # d'après ibdev2netdev, étape 2
+DUO_HCA=rocep1s0f0             # idem
+DUO_IP_TETE=192.168.100.10
+DUO_IP_WORKER=192.168.100.11
+DUO_NCCL_DEBUG=INFO            # pour le premier test : montre si NCCL passe par le câble (RoCE)
+```
+
+Pour le **premier test**, vider aussi `VLLM_SPEC_ARGS=` (décodage spéculatif) : une option de moins qui pourrait ne pas aimer le mode deux GPU. On la remettra une fois le duo validé.
+
+Vérifier que la configuration se lit sans erreur : `docker compose config --services` (doit lister vllm, litellm, open-webui, caddy…).
+
+**Spark 2 : préparer le dossier duo**
+
+```bash
+sudo mkdir -p /home/data/ws && sudo chown $USER /home/data/ws
+cd /home/data/ws
+git clone -b spark-duo https://github.com/Ameno1215/localIA.git ia-locale-duo
+mkdir -p /home/data/ws/{models,loras,cache/vllm,cache/flashinfer,cache/triton}
+```
+
+Une fois le câble configuré (étape 2), recopier depuis le Spark 1 le `.env`, le `.env.vllm` et les modèles :
+
+```bash
+# depuis le Spark 1, dans /home/data/ws/ia-locale-duo
+scp .env .env.vllm <utilisateur>@192.168.100.11:/home/data/ws/ia-locale-duo/
+rsync -a --info=progress2 /home/data/ws/models/ <utilisateur>@192.168.100.11:/home/data/ws/models/
+```
+
+Le dossier `models` entier est recopié exprès : le profil actif peut utiliser plusieurs dossiers (le modèle et son brouillon de décodage spéculatif, par exemple `…-LiLiCorr`). Par le câble, ~80 Go passent en quelques minutes.
+
+Sur le Spark 2, dans `/home/data/ws/ia-locale-duo/.env`, changer **une seule ligne** :
+
+```bash
+COMPOSE_FILE=docker-compose.spark-worker.yml
+```
+
+puis télécharger l'image : `docker compose pull`.
+
+**Basculer** (coupure du service pendant le chargement du modèle)
+
+```bash
+# Spark 1 : arrêter l'installation 1 Spark (et le panneau web s'il tourne : Ctrl+C dans son terminal)
+cd /home/data/ws/ia-locale && docker compose down
+
+# Spark 2
+cd /home/data/ws/ia-locale-duo && docker compose up -d
+
+# Spark 1
+cd /home/data/ws/ia-locale-duo && docker compose up -d
+docker compose logs -f vllm
+```
+
+Attendu dans les journaux, dans l'ordre : `Attente du Spark 2…` (tant que le Spark 2 n'a pas rejoint), `Cluster prêt : 2 GPU`, puis le chargement du modèle. Ensuite (section 4) : `docker compose exec vllm ray status`, la ligne `NET/IB` de NCCL, puis `./scripts/02-verifier-spark.sh`.
+
+**Revenir à l'installation 1 Spark** (à tout moment, rien n'a été modifié dans l'ancien dossier)
+
+```bash
+# Spark 1
+cd /home/data/ws/ia-locale-duo && docker compose down
+# Spark 2
+cd /home/data/ws/ia-locale-duo && docker compose down
+# Spark 1
+cd /home/data/ws/ia-locale && docker compose up -d
+```
+
+Pendant le test, lancer **toutes** les commandes (`docker compose …`, `./scripts/…`, le panneau web) depuis le dossier duo. Lancées depuis l'ancien dossier, elles agiraient sur l'installation 1 Spark.
 
 ## 2. Brancher et configurer le câble (sur les deux Spark)
 
