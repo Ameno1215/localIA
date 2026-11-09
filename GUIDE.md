@@ -311,12 +311,12 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 
 ### Côté serveur (sur le Spark)
 
-1. **Clone le projet** sur le Spark dans `/home/data/ws/ia-locale` (`git clone -b spark …`, voir le pas-à-pas ; Docker est déjà installé et configuré, `./scripts/00-prerequis.sh` ne fait que vérifier), puis copie à part les PDF des normes dans le dossier de données (`WS_DIR/docs-internes/`) : ils ne sont pas dans git.
+1. **Clone le projet** sur le Spark dans `/home/admin_spark4c7c/data/ws/ia-locale` (`git clone -b spark …`, voir le pas-à-pas ; Docker est déjà installé et configuré, `./scripts/00-prerequis.sh` ne fait que vérifier), puis copie à part les PDF des normes dans le dossier de données (`WS_DIR/docs-internes/`) : ils ne sont pas dans git.
 2. **Prépare la configuration :**
    ```bash
-   ./scripts/preparer-env-spark.sh spark1.lan /home/data/ws
+   ./scripts/preparer-env-spark.sh spark1.lan /home/admin_spark4c7c/data/ws
    ```
-   Le script génère les secrets, crée les dossiers de données (`WS_DIR`, par exemple `/home/data/ws`) (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
+   Le script génère les secrets, crée les dossiers de données (`WS_DIR`, par exemple `/home/admin_spark4c7c/data/ws`) (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
 3. **Télécharge les modèles du Spark** (~82 Go, dans `WS_DIR/models`), avec internet ou depuis un disque de transfert :
    ```bash
    ./scripts/01-telecharger-modeles.sh --spark

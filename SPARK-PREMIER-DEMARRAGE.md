@@ -8,40 +8,40 @@ Ce fichier suffit pour tester la branche `spark` de zéro à « ça répond ». 
 
 - DGX OS avec Docker, et le compte qui lance la stack dans le groupe `docker` (`groups | grep docker`). Ce groupe donne un accès équivalent à root : réserve-le au compte de service.
 - Pilote : `nvidia-smi` doit répondre. Les recettes NVIDIA ont été validées avec un pilote 580.x et CUDA 13.x.
-- Docker est déjà installé et configuré sur le Spark (stockage sur `/home/data/docker`) : **rien à installer**. Vérifie seulement `docker info --format '{{.DockerRootDir}}'`.
+- Docker est déjà installé et configuré sur le Spark (stockage sur `/home/admin_spark4c7c/data/docker`) : **rien à installer**. Vérifie seulement `docker info --format '{{.DockerRootDir}}'`.
 - Espace disque : compte **150 Go libres** pour le démarrage par défaut (Nemotron Super 76 Go avec son brouillon, embeddings et reranker 5 Go, images Docker ~30 Go), et **300 Go** si tu veux garder d'autres modèles à côté.
 - Internet pour le premier lancement (modèles et images). Ensuite tout peut tourner hors ligne.
 - Un nom DNS ou une adresse IP que les postes de l'équipe peuvent joindre (`spark1.lan` dans les exemples).
 
 ### Où vont les fichiers
 
-Le projet sépare la **configuration** des **données des conteneurs**. Avec l'organisation `/home/data/` :
+Le projet sépare la **configuration** des **données des conteneurs**. Avec l'organisation `/home/admin_spark4c7c/data/` :
 
 | Dossier | Contenu | Réglé par |
 |---|---|---|
-| `/home/data/ws/ia-locale` | Le projet cloné (git) : fichiers Docker Compose, `config/`, scripts, `.env` | Le `git clone` de l'étape 1 |
-| `/home/data/ws` (le reste) | Les **données** : modèles (`models/`), caches de compilation, bases Postgres et Qdrant, comptes Open WebUI, certificats, documents des normes | `WS_DIR` dans le `.env` (étape 3) |
-| `/home/data/docker` | Le stockage de Docker lui-même (images, couches, conteneurs) | Déjà configuré sur le Spark |
+| `/home/admin_spark4c7c/data/ws/ia-locale` | Le projet cloné (git) : fichiers Docker Compose, `config/`, scripts, `.env` | Le `git clone` de l'étape 1 |
+| `/home/admin_spark4c7c/data/ws` (le reste) | Les **données** : modèles (`models/`), caches de compilation, bases Postgres et Qdrant, comptes Open WebUI, certificats, documents des normes | `WS_DIR` dans le `.env` (étape 3) |
+| `/home/admin_spark4c7c/data/docker` | Le stockage de Docker lui-même (images, couches, conteneurs) | Déjà configuré sur le Spark |
 
-Tout est sous `/home/data/ws` : le projet dans `ia-locale/`, les données à côté (`models/`, `postgres/`, `qdrant/`…). Rien n'est stocké dans des « volumes Docker » cachés : tout ce qui est persistant est un dossier de `WS_DIR`, donc facile à sauvegarder ou à déplacer.
+Tout est sous `/home/admin_spark4c7c/data/ws` : le projet dans `ia-locale/`, les données à côté (`models/`, `postgres/`, `qdrant/`…). Rien n'est stocké dans des « volumes Docker » cachés : tout ce qui est persistant est un dossier de `WS_DIR`, donc facile à sauvegarder ou à déplacer.
 
 ## 1. Copier le projet sur le Spark
 
 Le dépôt est sur GitHub (`git@github.com:Ameno1215/localIA.git`, branche `spark`). Sur le Spark, avec le compte de service :
 ```bash
-git clone -b spark git@github.com:Ameno1215/localIA.git /home/data/ws/ia-locale
-cd /home/data/ws/ia-locale
+git clone -b spark git@github.com:Ameno1215/localIA.git /home/admin_spark4c7c/data/ws/ia-locale
+cd /home/admin_spark4c7c/data/ws/ia-locale
 ```
 Si le dépôt est privé, le Spark doit avoir une clé SSH autorisée sur GitHub (`Permission denied (publickey)` sinon).
 
-Le compte de service doit pouvoir écrire dans `/home/data/ws` : sinon, un administrateur lance une fois `sudo mkdir -p /home/data/ws && sudo chown <compte> /home/data/ws`.
+Le compte de service doit pouvoir écrire dans `/home/admin_spark4c7c/data/ws` : sinon, un administrateur lance une fois `sudo mkdir -p /home/admin_spark4c7c/data/ws && sudo chown <compte> /home/admin_spark4c7c/data/ws`.
 
-Sans accès à GitHub : `git bundle create ~/ia-locale-spark.bundle spark` sur le PC, copie du fichier (`scp`), puis `git clone -b spark ia-locale-spark.bundle /home/data/ws/ia-locale` sur le Spark.
+Sans accès à GitHub : `git bundle create ~/ia-locale-spark.bundle spark` sur le PC, copie du fichier (`scp`), puis `git clone -b spark ia-locale-spark.bundle /home/admin_spark4c7c/data/ws/ia-locale` sur le Spark.
 
 **Les PDF des normes ne sont pas dans git** (licences ISO et GlobalPlatform). Copie-les dans le dossier de données, sinon la recherche dans les normes restera vide :
 ```bash
 # Sur le PC :
-rsync -av docs-internes/ utilisateur@spark1.lan:/home/data/ws/docs-internes/
+rsync -av docs-internes/ utilisateur@spark1.lan:/home/admin_spark4c7c/data/ws/docs-internes/
 ```
 
 ## 2. Vérifier le Spark
@@ -54,11 +54,11 @@ Il vérifie le pilote, Docker (sans sudo), `docker compose` et Python, affiche l
 ## 3. Créer le `.env`
 
 ```bash
-./scripts/preparer-env-spark.sh spark1.lan /home/data/ws      # ton nom DNS ou ton adresse IP, puis le dossier des données
+./scripts/preparer-env-spark.sh spark1.lan /home/admin_spark4c7c/data/ws      # ton nom DNS ou ton adresse IP, puis le dossier des données
 ```
 Il copie `.env.spark.example`, génère les secrets (la clé maître LiteLLM commence bien par `sk-`), fixe le nom du serveur et `WS_DIR`, puis **crée les sous-dossiers de données** à ton nom (c'est important : s'ils étaient créés par Docker, ils appartiendraient à `root` et le téléchargement des modèles échouerait). Il ne remplace jamais un `.env` existant. Le jeton d'équipe pour les normes est `MCP_TOKEN` (à donner aux développeurs).
 
-Le projet cloné (`/home/data/ws/ia-locale`) est à côté des données, dans le même dossier : c'est voulu, les deux ne se mélangent pas.
+Le projet cloné (`/home/admin_spark4c7c/data/ws/ia-locale`) est à côté des données, dans le même dossier : c'est voulu, les deux ne se mélangent pas.
 
 ## 4. Télécharger les modèles (≈ 82 Go)
 
@@ -135,7 +135,7 @@ docker compose restart mcp-docs                     # pour que le modèle voie l
 | Embeddings ou reranker en erreur | `docker compose logs --tail 80 tei-embed tei-rerank` (ils tournent sous vLLM en mode « pooling », non validé sur Spark) |
 | `[ECHEC] appel d'outil` | Le parser d'outils ne correspond pas au modèle : `VLLM_TOOL_PARSER` dans `.env` |
 | `Crée d'abord le .env du Spark` alors que le `.env` existe, ou `grep: .env: Permission denied` | Le `.env` appartient à `root` (script lancé avec `sudo`). `sudo chown $USER .env` dans le dossier du projet, puis relance les scripts **sans** sudo |
-| `Permission denied` en écrivant dans le dossier des données (ex. `/work/models/bge-reranker-v2-m3`) | Le dossier a été créé au nom de `root` (`preparer-env-spark.sh` lancé avec sudo, ou Docker). `sudo chown -R $USER /home/data/ws` règle tout d'un coup. `sudo chown -R $USER /home/data/ws/models` (et le dossier concerné), ou relance `preparer-env-spark.sh` sur un `.env` supprimé |
+| `Permission denied` en écrivant dans le dossier des données (ex. `/work/models/bge-reranker-v2-m3`) | Le dossier a été créé au nom de `root` (`preparer-env-spark.sh` lancé avec sudo, ou Docker). `sudo chown -R $USER /home/admin_spark4c7c/data/ws/models` (ou le dossier concerné). ⚠ Jamais `chown -R` sur tout `WS_DIR` : `postgres/`, `qdrant/`, `open-webui/` et `caddy/` appartiennent aux utilisateurs des conteneurs (Postgres ne démarrerait plus), ou relance `preparer-env-spark.sh` sur un `.env` supprimé |
 | Autre | Section 9 du GUIDE |
 
 **Pour me transmettre un problème :**
