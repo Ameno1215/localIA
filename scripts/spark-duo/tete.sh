@@ -4,6 +4,9 @@
 set -euo pipefail
 : "${DUO_IP_TETE:?DUO_IP_TETE manquant dans .env}"
 
+# Ray n'est pas dans toutes les images vLLM (absent de l'image officielle vllm/vllm-openai)
+command -v ray >/dev/null || { echo "ERREUR : Ray absent de l'image ${VLLM_IMAGE:-vLLM}. Le duo a besoin d'une image avec Ray (ex. eugr/spark-vllm) : changer VLLM_IMAGE dans le .env des deux Spark." >&2; sleep 60; exit 1; }
+
 ray start --head --node-ip-address="$DUO_IP_TETE" --port="${DUO_RAY_PORT:-6379}" \
   --include-dashboard=false --disable-usage-stats
 
