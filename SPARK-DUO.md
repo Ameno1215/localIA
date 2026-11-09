@@ -77,7 +77,7 @@ WS_DIR=/home/admin_spark4c7c/data/ws
 COMPOSE_FILE=docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml
 VLLM_API_KEY=<résultat de : openssl rand -hex 16>
 DUO_INTERFACE=enp1s0f0np0      # d'après ibdev2netdev, étape 2
-DUO_HCA=rocep1s0f0             # idem
+DUO_HCA=rocep1s0f0,roceP2p1s0f0  # idem (les deux moitiés Up du port, étape 2.5)
 DUO_IP_TETE=192.168.100.10
 DUO_IP_WORKER=192.168.100.11
 DUO_NCCL_DEBUG=INFO            # pour le premier test : montre si NCCL passe par le câble (RoCE)
@@ -149,26 +149,83 @@ Pendant le test, lancer **toutes** les commandes (`docker compose …`, `./scrip
 
 ## 2. Brancher et configurer le câble (sur les deux Spark)
 
-1. **Branche le câble QSFP** entre un port ConnectX-7 de chaque Spark (le même port des deux côtés, c'est plus simple).
-2. **Repère l'interface active :**
-   ```bash
-   ibdev2netdev
-   ```
-   Note la ligne `(Up)`, par exemple `rocep1s0f0 port 1 ==> enp1s0f0np0 (Up)` : `rocep1s0f0` est la carte RDMA (`DUO_HCA`), `enp1s0f0np0` l'interface réseau (`DUO_INTERFACE`). Chaque port apparaît en double (`enp1s0f0np0` et `enP2p1s0f0np0`) : prends la première ligne `Up`.
-3. **Donne une adresse fixe à chaque Spark sur ce lien** (adresses privées, hors du réseau de l'équipe) :
-   ```bash
-   sudo tee /etc/netplan/40-qsfp.yaml >/dev/null <<'NETPLAN'
-   network:
-     version: 2
-     ethernets:
-       enp1s0f0np0:                      # DUO_INTERFACE
-         addresses: [192.168.100.10/24]  # .10 sur le Spark 1, .11 sur le Spark 2
-   NETPLAN
-   sudo chmod 600 /etc/netplan/40-qsfp.yaml && sudo netplan apply
-   ```
-4. **Vérifie :** depuis le Spark 1, `ping -c3 192.168.100.11`.
+### 2.1 Un câble suffit
 
-Pour mesurer le débit réel du lien (~200 Gb/s attendus), le playbook NVIDIA [NCCL for two Sparks](https://build.nvidia.com/spark) fournit un test `all_reduce_perf`. Facultatif, mais utile si le duo est lent.
+Chaque Spark a une carte ConnectX-7 avec **deux ports QSFP** à l'arrière. La carte est limitée à ~200 Gb/s au total (son lien PCIe), quel que soit le nombre de câbles. Un câble entre les deux Spark donne déjà ce maximum, et c'est le montage du playbook NVIDIA. Avec deux câbles, le second n'apporte pas de débit en plus et complique la configuration : **pour le premier test, un seul câble**, le second débranché (gardé en secours).
+
+Branche le câble sur le **même port des deux côtés** (par exemple le port de gauche sur chaque Spark) : les noms d'interface seront alors identiques sur les deux machines, et un seul `.env` sert aux deux.
+
+### 2.2 Repérer les interfaces (sur chaque Spark)
+
+```bash
+ibdev2netdev
+```
+
+Exemple de sortie, câble sur le premier port :
+
+```
+rocep1s0f0 port 1 ==> enp1s0f0np0 (Up)
+rocep1s0f1 port 1 ==> enp1s0f1np1 (Down)
+roceP2p1s0f0 port 1 ==> enP2p1s0f0np0 (Up)
+roceP2p1s0f1 port 1 ==> enP2p1s0f1np1 (Down)
+```
+
+Le port branché apparaît **deux fois** en `(Up)` : la carte est reliée au processeur par deux liens PCIe de ~100 Gb/s, et chaque moitié a son interface. À gauche, la carte RDMA (pour `DUO_HCA`) ; à droite, l'interface réseau (pour `DUO_INTERFACE` et le netplan). Note les deux lignes `(Up)` : utiliser les deux moitiés donne les ~200 Gb/s, une seule ~100 Gb/s.
+
+Si aucune ligne n'est `(Up)` : câble mal enfoncé, ou mauvais type de câble (il faut un câble QSFP direct, DAC ou optique, compatible 200 Gb/s).
+
+### 2.3 Donner des adresses fixes (sur chaque Spark)
+
+Une adresse par moitié, dans deux petits réseaux privés distincts (hors du réseau de l'équipe). Remplacer les noms d'interface par ceux notés en 2.2.
+
+Spark 1 :
+
+```bash
+sudo tee /etc/netplan/40-qsfp.yaml >/dev/null <<'NETPLAN'
+network:
+  version: 2
+  ethernets:
+    enp1s0f0np0:
+      addresses: [192.168.100.10/24]
+    enP2p1s0f0np0:
+      addresses: [192.168.101.10/24]
+NETPLAN
+sudo chmod 600 /etc/netplan/40-qsfp.yaml && sudo netplan apply
+```
+
+Spark 2 : le même fichier, avec `192.168.100.11/24` et `192.168.101.11/24`.
+
+Vérifier sur chaque Spark : `ip -br addr | grep 192.168.10` doit montrer les deux adresses, interfaces `UP`.
+
+### 2.4 Tester le lien (depuis le Spark 1)
+
+```bash
+ping -c3 192.168.100.11
+ping -c3 192.168.101.11
+ssh <compte-du-spark-2>@192.168.100.11 hostname     # servira au rsync des modèles
+```
+
+Facultatif, débit RDMA réel avec `ib_write_bw` (paquet `perftest`, s'il est installé) :
+
+```bash
+# Spark 2 (attend la connexion)
+ib_write_bw -d rocep1s0f0 --report_gbits
+# Spark 1
+ib_write_bw -d rocep1s0f0 --report_gbits 192.168.100.11
+```
+
+Attendu : de l'ordre de 90 à 100 Gb/s pour une moitié. Le playbook NVIDIA [NCCL for two Sparks](https://build.nvidia.com/spark) propose aussi un test `all_reduce_perf` sur les deux moitiés.
+
+### 2.5 Reporter dans le `.env` (Spark 1, puis copié sur le Spark 2)
+
+```bash
+DUO_INTERFACE=enp1s0f0np0                  # première interface (Up) : Ray, Gloo, démarrage de NCCL
+DUO_HCA=rocep1s0f0,roceP2p1s0f0            # les deux cartes RDMA (Up) : NCCL répartit le trafic sur les deux moitiés
+DUO_IP_TETE=192.168.100.10
+DUO_IP_WORKER=192.168.100.11
+```
+
+Si une seule moitié est `(Up)`, ne mettre qu'elle dans `DUO_HCA`.
 
 ## 3. Préparer les deux Spark
 
@@ -219,7 +276,8 @@ En duo, vLLM et Ray tournent sur le réseau de l'hôte : vLLM écoute le port 80
 - **Pare-feu** sur chaque Spark : tout est permis sur le câble, rien d'autre que le nécessaire depuis le réseau de l'équipe.
   ```bash
   sudo ufw allow ssh
-  sudo ufw allow in on enp1s0f0np0                                      # le câble entre les deux Spark
+  sudo ufw allow in on enp1s0f0np0                                      # le câble entre les deux Spark (1re moitié)
+  sudo ufw allow in on enP2p1s0f0np0                                    # le câble (2e moitié)
   sudo ufw allow from 172.16.0.0/12 to any port 8000 proto tcp          # conteneurs du Spark 1 (LiteLLM, MCP) vers vLLM
   sudo ufw allow from <ip-du-serveur-annexe> to any port 8000 proto tcp # si l'étape 6 est faite
   sudo ufw default deny incoming && sudo ufw enable
