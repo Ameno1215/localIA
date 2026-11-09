@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prépare le .env du Spark : copie .env.spark.example, génère les secrets, fixe le nom du serveur.
-#   ./scripts/preparer-env-spark.sh spark1.lan [/home/data/ws]
+#   ./scripts/preparer-env-spark.sh spark1.lan [/home/admin_spark4c7c/data/ws]
 #       1er argument : nom DNS ou adresse IP du Spark sur le réseau
 #       2e argument  : dossier des DONNÉES des conteneurs (modèles, caches, bases, documents). Défaut : ./ws
 # N'écrase jamais un .env existant. La clé maître LiteLLM doit commencer par « sk- » : c'est géré ici.

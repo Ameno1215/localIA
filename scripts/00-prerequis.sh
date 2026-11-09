@@ -41,7 +41,7 @@ if [ "$(uname -m)" = "aarch64" ]; then
     echo "  [OK]    outil hf déjà présent dans .venv"
   fi
   [ "$ok" = 1 ] || { echo "Corrige les lignes [ECHEC] avant de continuer."; exit 1; }
-  echo "OK. Étape suivante : ./scripts/preparer-env-spark.sh <nom-du-serveur> /home/data/ws"
+  echo "OK. Étape suivante : ./scripts/preparer-env-spark.sh <nom-du-serveur> /home/admin_spark4c7c/data/ws"
   exit 0
 fi
 
