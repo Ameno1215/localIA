@@ -274,7 +274,7 @@ Vérifications :
 sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
 docker compose up -d --force-recreate     # Spark 2, puis Spark 1
 ```
-Si l'erreur revient, baisser `VLLM_GPU_UTIL` de 0.02 à 0.04 dans le `.env` des deux Spark.
+Si l'erreur revient avec le même chiffre, ce n'est pas le cache : le Spark 1 porte aussi Open WebUI, le RAG, Ray… (mesuré : ~86 Go libres sur 121). Baisser alors `VLLM_GPU_UTIL` dans le `.env` des deux Spark, sous « Go libres ÷ 121.7 » (0.68 pour 86 Go). En duo chaque Spark ne porte que la moitié des poids : une valeur plus basse qu'en mode 1 Spark suffit.
 
 **Revenir à un seul Spark :** retire `docker-compose.spark-duo.yml` de `COMPOSE_FILE` sur le Spark 1, `docker compose down` sur le Spark 2, puis `docker compose up -d` sur le Spark 1 (avec un profil qui tient sur un Spark).
 
