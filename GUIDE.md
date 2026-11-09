@@ -408,7 +408,7 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 ### Plus tard
 
 - **Deuxième Spark :** deux façons de s'en servir, détaillées dans [SPARK-DUO.md](SPARK-DUO.md). Soit un modèle complet sur chaque Spark (décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`, LiteLLM répartit la charge), soit un seul modèle plus gros réparti sur les deux, reliés par le câble QSFP.
-- **Serveur annexe :** LiteLLM, Open WebUI, embeddings, bases et MCP peuvent tourner sur une machine x86 sans GPU, pour rendre 15 à 20 Go de mémoire au modèle ([SPARK-DUO.md](SPARK-DUO.md), étape 6).
+- **Serveur annexe :** LiteLLM, Open WebUI, embeddings, bases et MCP peuvent tourner sur une machine x86 sans GPU, pour rendre 15 à 20 Go de mémoire au modèle (annexe de [SPARK-DUO.md](SPARK-DUO.md), mise de côté et non testée).
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
 - **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec Nemotron Super. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
 

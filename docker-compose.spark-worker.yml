@@ -1,6 +1,6 @@
-# Spark 2 d'un duo (voir docker-compose.spark-duo.yml et SPARK-DUO.md) : prête son GPU au vLLM du Spark 1.  ⚠ NON TESTÉ
+# Spark 2 d'un duo (voir docker-compose.spark-duo.yml et SPARK-DUO.md) : prête son GPU au vLLM du Spark 1.  Validé le 09/11/2026
 #
-#   Même projet, même .env que le Spark 1, sauf :  COMPOSE_FILE=docker-compose.spark-worker.yml
+#   Même projet, même .env que le Spark 1, sauf :  COMPOSE_FILE=docker-compose.spark-worker.yml et WS_DIR (le sien)
 #   Mêmes poids (WS_DIR/models/<VLLM_MODEL>), même image (VLLM_IMAGE), même .env.vllm que le Spark 1.
 #   docker compose up -d
 #

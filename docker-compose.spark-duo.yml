@@ -1,11 +1,11 @@
 # Deux DGX Spark reliés par le câble QSFP : UN modèle réparti sur les deux (vLLM + Ray, tensor parallel 2).
-# Ce fichier = le Spark 1 (tête). Le Spark 2 lance docker-compose.spark-worker.yml.  ⚠ NON TESTÉ : voir SPARK-DUO.md.
+# Ce fichier = le Spark 1 (tête). Le Spark 2 lance docker-compose.spark-worker.yml.  Validé le 09/11/2026 : voir SPARK-DUO.md.
 #
 #   Dans le .env du Spark 1 :  COMPOSE_FILE=docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml
 #   puis (Spark 2 démarré ou non, la tête l'attend) :  docker compose up -d
 #
 # vLLM passe sur le réseau de l'hôte (obligatoire pour Ray et NCCL sur le lien direct). Il écoute donc sur toutes
-# les interfaces du Spark : fixer VLLM_API_KEY et le pare-feu (SPARK-DUO.md, étape 5).
+# les interfaces du Spark : fixer VLLM_API_KEY et le pare-feu (SPARK-DUO.md, section 4). VLLM_IMAGE doit contenir Ray (pas vllm/vllm-openai).
 
 x-reseau-duo: &reseau-duo
   VLLM_HOST_IP: ${DUO_IP_TETE}
