@@ -125,7 +125,7 @@ puis télécharger l'image : `docker compose pull`.
 cd /home/admin_spark4c7c/data/ws/ia-locale && docker compose down
 
 # Spark 2
-cd /home/admin_spark4c7c/data/ws/ia-locale-duo && docker compose up -d
+cd /home/admin_sparkXXXX/data/ws/ia-locale-duo && docker compose up -d
 
 # Spark 1
 cd /home/admin_spark4c7c/data/ws/ia-locale-duo && docker compose up -d
@@ -140,7 +140,7 @@ Attendu dans les journaux, dans l'ordre : `Attente du Spark 2…` (tant que le S
 # Spark 1
 cd /home/admin_spark4c7c/data/ws/ia-locale-duo && docker compose down
 # Spark 2
-cd /home/admin_spark4c7c/data/ws/ia-locale-duo && docker compose down
+cd /home/admin_sparkXXXX/data/ws/ia-locale-duo && docker compose down
 # Spark 1
 cd /home/admin_spark4c7c/data/ws/ia-locale && docker compose up -d
 ```
