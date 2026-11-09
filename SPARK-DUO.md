@@ -269,6 +269,13 @@ Vérifications :
 
 **Quel modèle :** `./scripts/modeles.py chercher` signale les recettes qui « ne tiennent PAS sur un seul Spark » : ce sont les candidats. `ajouter` écrit le profil comme d'habitude ; le passage sur deux GPU est ajouté par `scripts/spark-duo/tete.sh`, pas par le profil.
 
+**« Free memory on device cuda:0 (… GiB) on startup is less than desired GPU memory utilization » :** la mémoire est unifiée, et le cache disque laissé par un gros téléchargement ou un `rsync` de modèles compte comme occupé. Vider le cache sur **les deux** Spark, puis relancer (Spark 2 d'abord) :
+```bash
+sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+docker compose up -d --force-recreate     # Spark 2, puis Spark 1
+```
+Si l'erreur revient, baisser `VLLM_GPU_UTIL` de 0.02 à 0.04 dans le `.env` des deux Spark.
+
 **Revenir à un seul Spark :** retire `docker-compose.spark-duo.yml` de `COMPOSE_FILE` sur le Spark 1, `docker compose down` sur le Spark 2, puis `docker compose up -d` sur le Spark 1 (avec un profil qui tient sur un Spark).
 
 ## 5. Sécurité réseau (Spark 1 surtout)
