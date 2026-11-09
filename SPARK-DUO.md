@@ -31,7 +31,7 @@ Dans la suite, les chemins sont des exemples à adapter :
 |---|---|---|
 | Dossier actuel (1 Spark, on n'y touche pas) | `/home/admin_spark4c7c/data/ws/ia-locale` | (aucun) |
 | Nouveau dossier (duo) | `/home/admin_spark4c7c/data/ws/ia-locale-duo` | `/home/admin_spark4c7c/data/ws/ia-locale-duo` |
-| Données (`WS_DIR`) | `/home/admin_spark4c7c/data/ws` (**le même** pour les deux dossiers) | `/home/admin_spark4c7c/data/ws` (le sien, sur le Spark 2) |
+| Données (`WS_DIR`) | `/home/admin_spark4c7c/data/ws` (**le même** pour les deux dossiers) | `/home/admin_sparkXXXX/data/ws` (le sien : nom du compte de service du Spark 2) |
 | IP sur le câble | `192.168.100.10` | `192.168.100.11` |
 
 ### Pourquoi deux dossiers ne se gênent pas (et la seule règle à respecter)
@@ -48,7 +48,7 @@ Seuls deux fichiers non suivis par git sont à recopier puis modifier : `.env` e
 |---|---|---|---|
 | Branche | `spark` | `spark-duo` | `spark-duo` |
 | `COMPOSE_FILE` | `docker-compose.yml:docker-compose.spark.yml` | `docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml` | `docker-compose.spark-worker.yml` |
-| `WS_DIR` | `/home/admin_spark4c7c/data/ws` | `/home/admin_spark4c7c/data/ws` (**chemin absolu**, le même) | `/home/admin_spark4c7c/data/ws` (sur le Spark 2) |
+| `WS_DIR` | `/home/admin_spark4c7c/data/ws` | `/home/admin_spark4c7c/data/ws` (**chemin absolu**, le même) | `/home/admin_sparkXXXX/data/ws` (**à changer** après la copie du `.env`) |
 | `VLLM_API_KEY` | vide | une clé (`openssl rand -hex 16`) | la même clé |
 | `DUO_INTERFACE`, `DUO_HCA`, `DUO_IP_TETE`, `DUO_IP_WORKER` | absents | remplis | remplis, **identiques** au Spark 1 |
 | `VLLM_GPU_UTIL` | valeur du profil (0.74) | la même pour commencer | (lue sur le Spark 1) |
@@ -90,28 +90,31 @@ Vérifier que la configuration se lit sans erreur : `docker compose config --ser
 **Spark 2 : préparer le dossier duo**
 
 ```bash
-# en tant que admin_spark4c7c (le compte de service, membre du groupe docker)
-mkdir -p /home/admin_spark4c7c/data/ws
-cd /home/admin_spark4c7c/data/ws
+# en tant que le compte de service du Spark 2 (admin_sparkXXXX ci-dessous : remplacer par son vrai nom), membre du groupe docker
+mkdir -p /home/admin_sparkXXXX/data/ws
+cd /home/admin_sparkXXXX/data/ws
 git clone -b spark-duo https://github.com/Ameno1215/localIA.git ia-locale-duo
-mkdir -p /home/admin_spark4c7c/data/ws/{models,loras,cache/vllm,cache/flashinfer,cache/triton}
+mkdir -p /home/admin_sparkXXXX/data/ws/{models,loras,cache/vllm,cache/flashinfer,cache/triton}
 ```
 
 Une fois le câble configuré (étape 2), recopier depuis le Spark 1 le `.env`, le `.env.vllm` et les modèles :
 
 ```bash
 # depuis le Spark 1, dans /home/admin_spark4c7c/data/ws/ia-locale-duo
-scp .env .env.vllm admin_spark4c7c@192.168.100.11:/home/admin_spark4c7c/data/ws/ia-locale-duo/
-rsync -a --info=progress2 /home/admin_spark4c7c/data/ws/models/ admin_spark4c7c@192.168.100.11:/home/admin_spark4c7c/data/ws/models/
+scp .env .env.vllm admin_sparkXXXX@192.168.100.11:/home/admin_sparkXXXX/data/ws/ia-locale-duo/
+rsync -a --info=progress2 /home/admin_spark4c7c/data/ws/models/ admin_sparkXXXX@192.168.100.11:/home/admin_sparkXXXX/data/ws/models/
 ```
 
 Le dossier `models` entier est recopié exprès : le profil actif peut utiliser plusieurs dossiers (le modèle et son brouillon de décodage spéculatif, par exemple `…-LiLiCorr`). Par le câble, ~80 Go passent en quelques minutes.
 
-Sur le Spark 2, dans `/home/admin_spark4c7c/data/ws/ia-locale-duo/.env`, changer **une seule ligne** :
+Sur le Spark 2, dans `/home/admin_sparkXXXX/data/ws/ia-locale-duo/.env`, changer **deux lignes** :
 
 ```bash
 COMPOSE_FILE=docker-compose.spark-worker.yml
+WS_DIR=/home/admin_sparkXXXX/data/ws
 ```
+
+Le chemin des données peut différer d'un Spark à l'autre : chaque `.env` donne le sien, et dans les conteneurs les modèles sont toujours vus sous `/models/…`. Seuls comptent le **nom du dossier du modèle** (identique des deux côtés grâce au `rsync`) et `WS_DIR` qui pointe au bon endroit sur chaque machine.
 
 puis télécharger l'image : `docker compose pull`.
 
@@ -173,13 +176,14 @@ Pour mesurer le débit réel du lien (~200 Gb/s attendus), le playbook NVIDIA [N
   ```bash
   COMPOSE_FILE=docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml
   ```
-- **Spark 2 :** clone le projet (même branche), copie le `.env` **et** le `.env.vllm` du Spark 1, puis change une seule ligne du `.env` :
+- **Spark 2 :** clone le projet (même branche), copie le `.env` **et** le `.env.vllm` du Spark 1, puis change deux lignes du `.env` :
   ```bash
   COMPOSE_FILE=docker-compose.spark-worker.yml
+  WS_DIR=/home/admin_sparkXXXX/data/ws   # son propre dossier de données
   ```
-- **Les mêmes poids aux mêmes chemins sur les deux :** `WS_DIR/models/<VLLM_MODEL>` doit exister des deux côtés. Télécharge sur le Spark 1 (`./scripts/modeles.py telecharger <profil>`), puis copie par le câble, qui va bien plus vite que le réseau de l'équipe :
+- **Les mêmes poids sur les deux :** `WS_DIR/models/<VLLM_MODEL>` doit exister des deux côtés (chacun avec son `WS_DIR`). Télécharge sur le Spark 1 (`./scripts/modeles.py telecharger <profil>`), puis copie par le câble, qui va bien plus vite que le réseau de l'équipe :
   ```bash
-  rsync -a --info=progress2 /home/admin_spark4c7c/data/ws/models/<VLLM_MODEL> admin_spark4c7c@192.168.100.11:/home/admin_spark4c7c/data/ws/models/
+  rsync -a --info=progress2 /home/admin_spark4c7c/data/ws/models/<VLLM_MODEL> admin_sparkXXXX@192.168.100.11:/home/admin_sparkXXXX/data/ws/models/
   ```
 - **La même image** (`VLLM_IMAGE`) sur les deux : elle est dans le `.env` copié, `docker compose pull` sur chaque Spark.
 

@@ -86,7 +86,7 @@ Garder le dossier actuel (branche `spark`) intact, et cloner le dépôt une seco
 |---|---|---|---|
 | Branche | `spark` | `spark-duo` | `spark-duo` |
 | `COMPOSE_FILE` | `docker-compose.yml:docker-compose.spark.yml` | `…:docker-compose.spark-duo.yml` ajouté | `docker-compose.spark-worker.yml` |
-| `WS_DIR` | chemin absolu des données | **le même chemin absolu** | celui du Spark 2 |
+| `WS_DIR` | chemin absolu des données | **le même chemin absolu** | celui du Spark 2 (son compte de service, son chemin) |
 | `VLLM_API_KEY` | vide | une clé | la même clé |
 | `DUO_*` (interface, carte, IP) | absents | remplis | identiques au Spark 1 |
 | Secrets, `.env.vllm` | les vôtres | copiés à l'identique | copiés à l'identique |
