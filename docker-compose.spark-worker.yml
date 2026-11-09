@@ -32,6 +32,8 @@ services:
       UCX_NET_DEVICES: ${DUO_INTERFACE}
       NCCL_IB_HCA: ${DUO_HCA}
       NCCL_IB_DISABLE: "0"
+      # RoCE v2 sur IPv4 : index 3 sur le GB10 (vérifier : show_gids). Sans lui, NCCL peut choisir un GID qui ne passe pas
+      NCCL_IB_GID_INDEX: ${DUO_GID_INDEX:-3}
       NCCL_DEBUG: ${DUO_NCCL_DEBUG:-WARN}
       RAY_memory_monitor_refresh_ms: "0"
       DUO_IP_TETE: ${DUO_IP_TETE}

@@ -227,6 +227,8 @@ DUO_IP_WORKER=192.168.100.11
 
 Si une seule moitié est `(Up)`, ne mettre qu'elle dans `DUO_HCA`.
 
+NCCL utilise l'index GID 3 (RoCE v2 sur IPv4, valeur habituelle sur le GB10). Pour le vérifier : `show_gids | grep 192.168.100` doit montrer `v2` à l'index 3 ; sinon, mettre le bon index dans `DUO_GID_INDEX`.
+
 ## 3. Préparer les deux Spark
 
 - **Spark 1 (tête) :** le projet tel qu'il est déjà installé. Dans son `.env`, décommente et remplis le bloc « Duo » (`DUO_INTERFACE`, `DUO_HCA`, `DUO_IP_TETE`, `DUO_IP_WORKER`), mets une clé dans `VLLM_API_KEY` (`openssl rand -hex 16`), et ajoute le fichier duo :
