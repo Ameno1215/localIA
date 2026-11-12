@@ -5,15 +5,15 @@ model_list:
   - model_name: qwen-local
     litellm_params:
       model: hosted_vllm/qwen-local
-      api_base: http://vllm:8000/v1
-      api_key: none
+      api_base: os.environ/VLLM_API_BASE
+      api_key: os.environ/VLLM_API_KEY
 
   # Même modèle + adaptateur LoRA entraîné sur les normes internes (voir finetune/)
   - model_name: normes
     litellm_params:
       model: hosted_vllm/normes
-      api_base: http://vllm:8000/v1
-      api_key: none
+      api_base: os.environ/VLLM_API_BASE
+      api_key: os.environ/VLLM_API_KEY
 
   # Embeddings (pour Open WebUI et tes scripts)
   - model_name: bge-m3
@@ -24,9 +24,10 @@ model_list:
     model_info:
       mode: embedding
 
-  # Plus tard sur 2 Spark : deux entrées avec le même model_name = répartition de charge
+  # 2 Spark indépendants (un modèle complet sur chacun, voir SPARK-DUO.md) : deux entrées avec le même
+  # model_name = répartition de charge. Inutile en duo (un seul modèle réparti sur les deux Spark).
   # - model_name: qwen-local
-  #   litellm_params: { model: hosted_vllm/qwen-local, api_base: http://spark2:8000/v1, api_key: none }
+  #   litellm_params: { model: hosted_vllm/qwen-local, api_base: http://spark2.lan:8000/v1, api_key: os.environ/VLLM_API_KEY }
 
 litellm_settings:
   drop_params: true

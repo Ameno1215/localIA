@@ -1,0 +1,64 @@
+# Serveur annexe (PC ou serveur x86 du réseau, sans GPU) : tout SAUF le modèle, pour laisser la mémoire des Spark à vLLM.
+# ⚠ NON TESTÉ : voir SPARK-DUO.md, étape 6.
+#
+#   LiteLLM + Postgres, Open WebUI, Qdrant, MCP docs, Caddy (HTTPS) et embeddings/reranker (TEI sur CPU, image x86).
+#   Le modèle reste sur le Spark 1 (seul ou en duo), joint par le réseau : VLLM_API_BASE et VLLM_API_KEY dans .env.
+#
+#   Dans le .env du serveur :  COMPOSE_FILE=docker-compose.yml:docker-compose.serveur.yml
+#   docker compose up -d
+#
+# Les clients (OpenCode, navigateurs) visent ce serveur : SPARK_HOSTNAME = son nom sur le réseau.
+
+services:
+  # Jamais démarré ici : le modèle tourne sur le(s) Spark
+  vllm:
+    profiles: ["sur-le-spark"]
+
+  # Embeddings et reranker : TEI sur CPU, défini dans docker-compose.yml (bge-m3 et bge-reranker-v2-m3 dans WS_DIR/models)
+  tei-embed:
+    volumes: !override ["${WS_DIR:-./ws}/models:/models:ro"]
+
+  tei-rerank:
+    volumes: !override ["${WS_DIR:-./ws}/models:/models:ro"]
+
+  mcp-docs:
+    environment:
+      OUTILS_CODE: "0"
+      DOCS_PUBLIC_URL: https://${SPARK_HOSTNAME}
+    ports: !reset []
+    volumes: !override
+      - ${DOCS_DIR:-${WS_DIR:-./ws}/docs-internes}:/docs:ro
+      - ${WS_DIR:-./ws}/workspace:/workspace
+      - ./finetune:/finetune:ro
+      - ${WS_DIR:-./ws}/data:/data
+
+  postgres:
+    volumes: !override
+      - ${WS_DIR:-./ws}/postgres:/var/lib/postgresql/data
+
+  qdrant:
+    volumes: !override
+      - ${WS_DIR:-./ws}/qdrant:/qdrant/storage
+
+  litellm:
+    ports: !override
+      - "127.0.0.1:4000:4000"
+
+  open-webui:
+    ports: !override
+      - "${OPEN_WEBUI_HTTP:-127.0.0.1}:3000:8080"
+    volumes: !override
+      - ${WS_DIR:-./ws}/open-webui:/app/backend/data
+
+  # Même porte d'entrée que sur le Spark (config/Caddyfile.spark)
+  caddy:
+    image: caddy:2.10.2
+    environment:
+      SPARK_HOSTNAME: ${SPARK_HOSTNAME}
+      MCP_TOKEN: ${MCP_TOKEN}
+    volumes:
+      - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
+      - ${WS_DIR:-./ws}/caddy:/data
+    ports: ["443:443", "8443:8443"]
+    depends_on: [litellm, mcp-docs, open-webui]
+    restart: unless-stopped

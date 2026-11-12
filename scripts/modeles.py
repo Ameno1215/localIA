@@ -330,6 +330,11 @@ def hf(hf_id: str, dossier: str, exclure: list[str] | None = None) -> None:
     """Télécharge un modèle dans WS/models/<dossier>."""
     local = PROJET / ".venv" / "bin" / "hf"
     sup = [x for e in (exclure or []) for x in ("--exclude", e)]
+    cible = WS / "models"
+    for d in (cible, cible / dossier):
+        if d.exists() and not os.access(d, os.W_OK):
+            erreur(f"{d} n'est pas modifiable par {os.environ.get('USER', 'cet utilisateur')}. "
+                   f"Corrige avec :  sudo chown -R $USER: {d}  (seulement ce dossier, jamais tout WS_DIR)")
     if local.exists():
         cmd = [str(local), "download", hf_id, "--local-dir", str(WS / "models" / dossier), *sup]
     else:

@@ -13,6 +13,7 @@ Elle tourne aujourd'hui sur un PC de test (RTX 8 Go) et est prête à passer sur
 |---|---|
 | [GUIDE.md](GUIDE.md) | Comprendre et utiliser la plateforme |
 | [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) | **Tester sur le DGX Spark**, pas à pas (branche `spark`) |
+| [SPARK-DUO.md](SPARK-DUO.md) | Relier deux Spark pour un modèle plus gros (validé le 09/11/2026). Voir aussi la section ci-dessous |
 | [AUDIT-NVIDIA.md](AUDIT-NVIDIA.md) | Écarts avec les tutoriels et recettes officiels NVIDIA, et corrections faites |
 
 ## Démarrage rapide
@@ -76,3 +77,20 @@ Crée la configuration à partir du modèle (pense à changer les secrets), puis
 | Open WebUI | ⚠️ prêt, compte admin à créer |
 | Fine-tuning LoRA `normes` | ⏳ scripts prêts, pas encore lancé |
 | Configuration DGX Spark (branche `spark`, modèle Nemotron 3.5 Super VL 120B) | ⏳ prête et vérifiée sur PC (rendu Docker, scripts), **jamais lancée sur un Spark** : voir [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) |
+
+## Tester le duo (2 Spark) à côté de l'installation 1 Spark
+
+Garder le dossier actuel (branche `spark`) intact, et cloner le dépôt une seconde fois sur la branche `spark-duo`. Le pas-à-pas complet (câble, pare-feu, copies, démarrage, dépannage) est dans [SPARK-DUO.md](SPARK-DUO.md), validé sur les deux Spark le 09/11/2026. En bref, dans le dossier duo, seuls `.env` et `.env.vllm` diffèrent :
+
+| Réglage | Dossier 1 Spark | Dossier duo, Spark 1 | Dossier duo, Spark 2 |
+|---|---|---|---|
+| Branche | `spark` | `spark-duo` | `spark-duo` |
+| `COMPOSE_FILE` | `docker-compose.yml:docker-compose.spark.yml` | `…:docker-compose.spark-duo.yml` ajouté | `docker-compose.spark-worker.yml` |
+| `WS_DIR` | chemin absolu des données | **le même chemin absolu** | celui du Spark 2 (son compte de service, son chemin) |
+| `VLLM_IMAGE` | celle du profil | une image **avec Ray** (`eugr/spark-vllm`) | la même |
+| `VLLM_GPU_UTIL` | celle du profil (0.74) | **0.68** | la même |
+| `VLLM_API_KEY` | vide | une clé | la même clé |
+| `DUO_*` (interface, carte, IP **du câble**) | absents | remplis | identiques au Spark 1 |
+| Secrets, `.env.vllm` | les vôtres | copiés à l'identique | copiés à l'identique |
+
+Un seul des deux dossiers tourne à la fois : `docker compose down` dans l'un avant `docker compose up -d` dans l'autre (mêmes ports, mêmes bases de données).
