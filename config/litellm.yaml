@@ -39,3 +39,9 @@ router_settings:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  # Une ligne par requête dans LiteLLM_SpendLogs (heures, TTFT, jetons, clé, statut) : base de la comparaison
+  # des modèles (scripts/rapport-modeles.py). Jamais le texte des prompts ni des réponses (vie privée).
+  store_prompts_in_spend_logs: false
+  # Purge automatique des lignes de plus d'un an
+  maximum_spend_logs_retention_period: "365d"
+  maximum_spend_logs_retention_interval: "1d"

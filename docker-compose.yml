@@ -7,6 +7,11 @@
 #
 # Sur le Spark (arm64) : mêmes services, images aarch64, modèle plus gros.
 
+# Journaux Docker bornés (sinon ils grossissent sans limite) : 5 x 50 Mo par service
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
+
 x-offline: &offline
   HF_HUB_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
@@ -19,6 +24,7 @@ x-tei: &tei
     MALLOC_ARENA_MAX: "2"
     OMP_NUM_THREADS: "4"
   volumes: ["./models:/models:ro"]
+  logging: *logs
   restart: unless-stopped
 
 services:
@@ -53,6 +59,7 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 15s
       retries: 40
+    logging: *logs
     restart: unless-stopped
 
   # Embeddings + reranker sur CPU : la VRAM reste pour le LLM
@@ -68,6 +75,7 @@ services:
     image: qdrant/qdrant:v1.19.2
     volumes: ["qdrant:/qdrant/storage"]
     ports: ["127.0.0.1:6333:6333"]
+    logging: *logs
     restart: unless-stopped
 
   # Serveur MCP maison : recherche dans les normes/docs. Utilisé par OpenCode et Open WebUI.
@@ -87,6 +95,7 @@ services:
       - ./data:/data
     ports: ["127.0.0.1:9901:9901"]
     depends_on: [qdrant, tei-embed, tei-rerank]
+    logging: *logs
     restart: unless-stopped
 
   # Passerelle multi-utilisateurs : une clé API par personne, quotas, logs, routage
@@ -100,6 +109,7 @@ services:
     volumes: ["./config/litellm.yaml:/app/config.yaml:ro"]
     ports: ["127.0.0.1:4000:4000"]
     depends_on: [postgres]
+    logging: *logs
     restart: unless-stopped
 
   postgres:
@@ -109,6 +119,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: litellm
     volumes: ["postgres:/var/lib/postgresql/data"]
+    logging: *logs
     restart: unless-stopped
 
   # Interface web : comptes utilisateurs, historique, RAG sur documents déposés
@@ -134,6 +145,7 @@ services:
     volumes: ["open-webui:/app/backend/data"]
     ports: ["0.0.0.0:3000:8080"]
     depends_on: [litellm, qdrant]
+    logging: *logs
     restart: unless-stopped
 
 volumes:

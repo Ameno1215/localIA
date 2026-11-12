@@ -16,6 +16,10 @@
 #
 # Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
 
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
+
 x-vllm-pooling: &vllm-pooling
   image: ${VLLM_POOLING_IMAGE:-vllm/vllm-openai:v0.30.0}
   entrypoint: ["vllm", "serve"]
@@ -128,6 +132,9 @@ services:
     volumes:
       - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
       - ${WS_DIR:-./ws}/caddy:/data
+      # Journaux d'accès JSON (sans en-têtes d'authentification ni corps), pour les erreurs et latences par client
+      - ${WS_DIR:-./ws}/logs/caddy:/var/log/caddy
+    logging: *logs
     ports: ["443:443", "8443:8443"]
     depends_on: [litellm, mcp-docs, open-webui]
     restart: unless-stopped
