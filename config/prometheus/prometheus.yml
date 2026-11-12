@@ -1,0 +1,42 @@
+# Métriques du Spark, gardées un an dans WS_DIR/prometheus (voir docker-compose.spark.yml).
+# Sert à comparer les modèles et la pile dans le temps : TTFT, latence, débit, file d'attente, cache KV, GPU.
+# Le label « profil » vient de WS_DIR/prometheus/cibles/vllm.json, écrit par  ./scripts/modeles.py utiliser <profil>
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # LLM : vllm:time_to_first_token_seconds, e2e_request_latency_seconds, request_queue_time_seconds,
+  # prompt_tokens_total, generation_tokens_total, num_requests_running/waiting, kv_cache_usage_perc…
+  - job_name: vllm
+    file_sd_configs:
+      - files: [/etc/prometheus/cibles/vllm.json]
+
+  # Embeddings et reranker (vLLM en mode pooling)
+  - job_name: vllm-pooling
+    static_configs:
+      - targets: ["tei-embed:80"]
+        labels: { service: embeddings }
+      - targets: ["tei-rerank:80"]
+        labels: { service: reranker }
+
+  - job_name: qdrant
+    static_configs:
+      - targets: ["qdrant:6333"]
+
+  # GPU (nvidia-smi) et machine (mémoire unifiée, CPU, disque, réseau)
+  - job_name: gpu
+    static_configs:
+      - targets: ["gpu-exporter:9835"]
+        labels: { hote: spark1 }
+
+  - job_name: machine
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels: { hote: spark1 }
+
+  # Duo : décommenter pour suivre aussi le Spark 2 (exporteurs lancés là-bas, ports ouverts sur le câble seulement)
+  # - job_name: gpu-spark2
+  #   static_configs: [{ targets: ["192.168.100.11:9835"], labels: { hote: spark2 } }]
+  # - job_name: machine-spark2
+  #   static_configs: [{ targets: ["192.168.100.11:9100"], labels: { hote: spark2 } }]

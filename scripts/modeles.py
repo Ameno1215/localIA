@@ -387,6 +387,16 @@ def journaliser_profil(evenement: str, nom: str, p: dict, courant: dict) -> None
     f.parent.mkdir(parents=True, exist_ok=True)
     with f.open("a") as sortie:
         sortie.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+    if evenement != "echec":
+        ecrire_cible_prometheus(nom, ligne["mode"])
+
+
+def ecrire_cible_prometheus(nom: str, mode: str) -> None:
+    """Cible vLLM de Prometheus avec le profil en label : les métriques se comparent par modèle.
+    Prometheus relit ce fichier tout seul (file_sd), sans redémarrage."""
+    f = WS / "prometheus" / "cibles" / "vllm.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps([{"targets": ["vllm:8000"], "labels": {"profil": nom, "mode": mode}}], indent=2) + "\n")
 
 
 def lire_historique() -> list[dict]:
