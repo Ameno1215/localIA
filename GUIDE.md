@@ -411,6 +411,30 @@ Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
 - **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec Nemotron Super. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
 
+### Comparer les modèles : journaux, métriques, évaluations
+
+Tout est conservé dans `WS_DIR` sur le Spark, en dehors des conteneurs (rien n'est perdu avec `docker compose down`).
+
+| Donnée | Où | Durée |
+|---|---|---|
+| Profil actif au fil du temps | `WS_DIR/logs/profils.jsonl` (`./scripts/modeles.py historique`) | illimitée |
+| Une ligne par requête LLM : heures, TTFT, jetons, clé (jamais le texte) | Postgres, table `LiteLLM_SpendLogs` | 1 an |
+| Recherches RAG : ids, scores, durées, références inventées | `WS_DIR/logs/rag/rag-AAAA-MM.jsonl` | illimitée (questions : empreinte seulement) |
+| Texte des questions RAG (si `RAG_LOG_QUESTIONS=texte`) | `WS_DIR/logs/rag/questions-AAAA-MM.jsonl` | `RAG_LOG_RETENTION_DAYS` (90 j) |
+| Accès HTTPS (statut, durée, client) | `WS_DIR/logs/caddy/{api,webui}.log` | 90 jours |
+| Métriques vLLM, GPU, machine, Qdrant | Prometheus, `WS_DIR/prometheus/data` | 1 an (20 Go max) |
+| Avis 👍/👎 | Open WebUI, `WS_DIR/open-webui/webui.db` | illimitée |
+| Évaluations fixes | `WS_DIR/evals/` | illimitée |
+
+- **Rapport par profil** (une colonne par modèle) :  `./scripts/rapport-modeles.py --depuis 2026-11-01`  (`--csv fichier.csv` pour un tableur).
+- **Évaluation fixe** : lancée à la fin de `./scripts/modeles.py utiliser <profil>` (`--sans-eval` pour la sauter), ou à la main avec `./scripts/evaluer.py`. Jeux dans `evals/` : **remplace les questions d'exemple de `evals/normes.jsonl` par des questions sur vos vraies normes** (faits attendus en regex, document source attendu). Le code produit par le modèle est testé dans un conteneur sans réseau.
+- **Prometheus** : `http://127.0.0.1:9090` sur le Spark (depuis un poste : `ssh -L 9090:127.0.0.1:9090 <compte>@<spark>`). Exemples :
+  - TTFT p95 par profil : `histogram_quantile(0.95, sum by (le, profil) (rate(vllm:time_to_first_token_seconds_bucket[5m])))`
+  - débit généré : `sum by (profil) (rate(vllm:generation_tokens_total[5m]))`
+  - puissance GPU : `gpu_puissance_watts` ; mémoire unifiée libre : `node_memory_MemAvailable_bytes`
+- Après la mise à jour, lance une fois `./scripts/modeles.py utiliser <profil actuel> --sans-eval` : cela crée la cible vLLM de Prometheus (avec le label `profil`) et la première ligne de l'historique.
+- **Vie privée** : pas de prompts dans LiteLLM, utilisateurs identifiés par l'empreinte de leur clé, rapports en agrégats seulement. Open WebUI garde en revanche les conversations complètes, lisibles par un administrateur : à signaler aux utilisateurs.
+
 ---
 
 ## 9. Dépannage

@@ -6,7 +6,7 @@
   ./scripts/modeles.py ajouter <id_hf> [options] crée le profil config/modeles-spark/<nom>.env d'après la recette
   ./scripts/modeles.py lister                    profils connus, téléchargés ou non, actif
   ./scripts/modeles.py telecharger <nom>         télécharge les poids dans ./models
-  ./scripts/modeles.py utiliser <nom>            télécharge si besoin, écrit .env, redémarre vLLM
+  ./scripts/modeles.py utiliser <nom>            télécharge si besoin, écrit .env, redémarre vLLM, lance l'évaluation fixe
   ./scripts/modeles.py historique [--a DATE]     profils activés au fil du temps (ou celui actif à une date)
 
 Un profil = les réglages vLLM d'un modèle (image, parsers, options). Les recettes viennent de
@@ -457,7 +457,12 @@ def cmd_utiliser(a) -> None:
         etat = subprocess.run([*compose, "ps", "--format", "{{.Health}}|{{.State}}", "vllm"], cwd=PROJET, capture_output=True, text=True).stdout.strip()
         if etat.startswith("healthy"):
             journaliser_profil("actif", a.nom, p, courant)
-            return print("\nvLLM répond. Vérification complète :  ./scripts/02-verifier-spark.sh")
+            print("\nvLLM répond. Vérification complète :  ./scripts/02-verifier-spark.sh")
+            if a.sans_eval:
+                return print("Évaluation sautée. Plus tard :  ./scripts/evaluer.py")
+            print("Évaluation fixe du profil (10 à 15 min, Ctrl+C pour l'interrompre sans risque) :  ./scripts/evaluer.py")
+            subprocess.run([sys.executable, str(PROJET / "scripts" / "evaluer.py"), "--env", a.env], cwd=PROJET)
+            return
         if "exited" in etat or "dead" in etat:
             break
         print(".", end="", flush=True)
@@ -476,7 +481,7 @@ def main() -> None:
     c = sp.add_parser("lister"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_lister)
     c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--env", default=".env"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
     c = sp.add_parser("utiliser"); c.add_argument("nom"); c.add_argument("--env", default=".env")
-    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
+    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--sans-eval", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
     c = sp.add_parser("historique"); c.add_argument("--a", help="date ISO (2026-11-12 ou 2026-11-12T14:30) : profil actif à ce moment"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_historique)
     a = ap.parse_args()
     global WS
