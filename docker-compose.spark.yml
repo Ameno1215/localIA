@@ -94,6 +94,10 @@ services:
       RAG_BACKEND: vllm
       # Adresse des liens « Sources » vue par le navigateur des utilisateurs (via Caddy)
       DOCS_PUBLIC_URL: https://${SPARK_HOSTNAME}
+      # Journal du RAG (ids, scores, durées) pour comparer les modèles. Questions : hash (défaut), texte ou non
+      RAG_LOG_DIR: /logs/rag
+      RAG_LOG_QUESTIONS: ${RAG_LOG_QUESTIONS:-hash}
+      RAG_LOG_RETENTION_DAYS: ${RAG_LOG_RETENTION_DAYS:-90}
     ports: !reset []
     volumes: !override
       # DOCS_DIR dans .env pour lire les normes ailleurs (ex. ./docs-internes, le dossier du projet)
@@ -101,6 +105,7 @@ services:
       - ${WS_DIR:-./ws}/workspace:/workspace
       - ./finetune:/finetune:ro
       - ${WS_DIR:-./ws}/data:/data
+      - ${WS_DIR:-./ws}/logs/rag:/logs/rag
 
   # Données persistantes dans WS_DIR (et non dans des volumes cachés du stockage Docker)
   postgres:

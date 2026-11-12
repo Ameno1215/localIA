@@ -10,15 +10,18 @@ import html
 import logging
 import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote, unquote
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from qdrant_client import QdrantClient
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
+
+import journal
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_URL = os.environ.get("EMBED_URL", "http://localhost:8081")
@@ -143,7 +146,8 @@ async def infos_refs(request: Request) -> Response:
     """Pour le filtre Open WebUI : /refs?r=a1b2c3d4,e5f6a7b8 -> {ref: {source, page, url, extrait} ou null}.
     url : le document à la bonne page (PDF) ou, à défaut, l'extrait ; extrait : toujours la page de l'extrait."""
     infos = {}
-    for ref in request.query_params.get("r", "").split(",")[:50]:
+    demandees = [r for r in request.query_params.get("r", "").split(",")[:50] if r]
+    for ref in demandees:
         id_point = _resoudre(ref) if ref else None
         trouves = qdrant.retrieve(COLLECTION, ids=[id_point]) if id_point else []
         p = trouves[0].payload if trouves else None
@@ -153,6 +157,10 @@ async def infos_refs(request: Request) -> Response:
             "url": _lien_source(ref, p["source"], p.get("page")),
             "extrait": f"{DOCS_PUBLIC_URL}/x/{ref}",
         } if p else None
+    # Envoyé par le filtre Open WebUI avec les références écrites par le modèle : une inconnue est inventée
+    if request.query_params.get("journal") == "1":
+        journal.references(demandees, [r for r in demandees if not infos.get(r)],
+                           request.query_params.get("modele"), request.query_params.get("client", "openwebui"))
     return JSONResponse(infos)
 
 
@@ -222,15 +230,48 @@ def _description_outil() -> str:
     )
 
 
+def _ms(debut: float, fin: float) -> float:
+    return round((fin - debut) * 1000, 1)
+
+
+def _client(ctx: Context | None) -> str | None:
+    """Qui appelle : Open WebUI (réseau Docker) ou un poste (OpenCode, via Caddy). Sans garantie selon le transport."""
+    try:
+        requete = ctx.request_context.request
+        agent = requete.headers.get("user-agent", "")
+        via_caddy = "x-forwarded-for" in requete.headers
+        return ("poste:" if via_caddy else "interne:") + agent[:60]
+    except Exception:
+        return None
+
+
 @mcp.tool(description=_description_outil())
-def rechercher_docs(question: str, nb_resultats: int = 5) -> str:
+def rechercher_docs(question: str, nb_resultats: int = 5, ctx: Context | None = None) -> str:
     """Recherche dans les documents internes."""
-    log.info("rechercher_docs(%r)", question)
-    candidats = qdrant.query_points(COLLECTION, query=embed([question])[0], limit=20).points
+    id_requete = uuid.uuid4().hex[:12]
+    log.info("rechercher_docs %s (%d caractères)", id_requete, len(question))
+    t0 = time.perf_counter()
+    vecteur = embed([question])[0]
+    t1 = time.perf_counter()
+    candidats = qdrant.query_points(COLLECTION, query=vecteur, limit=20).points
+    t2 = time.perf_counter()
     if not candidats:
+        journal.recherche(id_requete, question, _client(ctx), nb_resultats=nb_resultats, candidats=[], retenus=[],
+                          t_embed_ms=_ms(t0, t1), t_qdrant_ms=_ms(t1, t2), t_total_ms=_ms(t0, t2))
         return "Aucun document indexé ne correspond."
     textes = [c.payload["texte"] for c in candidats]
-    classes = sorted(rerank(question, textes), key=lambda x: x["score"], reverse=True)[:nb_resultats]
+    scores = rerank(question, textes)
+    t3 = time.perf_counter()
+    classes = sorted(scores, key=lambda x: x["score"], reverse=True)[:nb_resultats]
+    rerank_par_index = {x["index"]: x["score"] for x in scores}
+    journal.recherche(
+        id_requete, question, _client(ctx), nb_resultats=nb_resultats,
+        candidats=[{"ref": _ref(c.id), "source": c.payload["source"], "page": c.payload.get("page"),
+                    "score_vecteur": round(c.score, 4), "score_rerank": round(rerank_par_index.get(i, 0.0), 4)}
+                   for i, c in enumerate(candidats)],
+        retenus=[_ref(candidats[x["index"]].id) for x in classes],
+        t_embed_ms=_ms(t0, t1), t_qdrant_ms=_ms(t1, t2), t_rerank_ms=_ms(t2, t3), t_total_ms=_ms(t0, t3),
+    )
     blocs = []
     for x in classes:
         p = candidats[x["index"]].payload
