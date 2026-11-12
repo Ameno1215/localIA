@@ -67,14 +67,15 @@ def centile(valeurs: list[float], q: float) -> float | None:
 # ----------------------------------------------------------------------------- profils
 
 def periodes(ws: Path) -> list[tuple[str, float, float, str]]:
-    """[(profil, début, fin, mode)] d'après les événements « actif » du journal."""
+    """[(profil, début, fin, mode)] d'après le journal : un changement de profil ouvre une période."""
     f = ws / "logs" / "profils.jsonl"
     actifs = []
     if f.exists():
         for l in f.read_text().splitlines():
             if l.strip():
                 e = json.loads(l)
-                if e.get("evenement") == "actif":
+                # « configure » : utiliser --sans-redemarrer (duo), vLLM redémarré à la main juste après
+                if e.get("evenement") in ("actif", "configure") and not (actifs and actifs[-1][0] == e["profil"]):
                     actifs.append((e["profil"], epoch(e["ts"]), e.get("mode", "simple")))
     res = [(INCONNU, 0.0, actifs[0][1] if actifs else float("inf"), "?")]
     for i, (nom, debut, mode) in enumerate(actifs):

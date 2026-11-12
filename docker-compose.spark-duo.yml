@@ -43,3 +43,7 @@ services:
 
   mcp-docs:
     extra_hosts: ["vllm:host-gateway"]
+
+  # Métriques de vLLM (désormais sur l'hôte) et du Spark 2 (par le câble)
+  prometheus:
+    extra_hosts: ["vllm:host-gateway"]

@@ -6,6 +6,10 @@
 #
 # Seul ce conteneur tourne ici : pas de LiteLLM, d'Open WebUI ni d'embeddings, toute la mémoire va au modèle.
 
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
+
 services:
   ray-worker:
     image: ${VLLM_IMAGE}
@@ -51,4 +55,28 @@ services:
       resources:
         reservations:
           devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    logging: *logs
+    restart: unless-stopped
+
+  # Métriques du Spark 2, lues par le Prometheus du Spark 1 par le câble (ports 9835 et 9100).
+  # Réseau de l'hôte : ufw les bloque sur le réseau de l'équipe, le câble est déjà autorisé (SPARK-DUO.md, section 4).
+  gpu-exporter:
+    image: python:3.12-slim
+    command: ["python", "/app/exporter.py"]
+    network_mode: host
+    volumes: ["./services/gpu-exporter/exporter.py:/app/exporter.py:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu, utility] }]
+    logging: *logs
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host"]
+    network_mode: host
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    logging: *logs
     restart: unless-stopped

@@ -35,8 +35,8 @@ scrape_configs:
       - targets: ["node-exporter:9100"]
         labels: { hote: spark1 }
 
-  # Duo : décommenter pour suivre aussi le Spark 2 (exporteurs lancés là-bas, ports ouverts sur le câble seulement)
-  # - job_name: gpu-spark2
-  #   static_configs: [{ targets: ["192.168.100.11:9835"], labels: { hote: spark2 } }]
-  # - job_name: machine-spark2
-  #   static_configs: [{ targets: ["192.168.100.11:9100"], labels: { hote: spark2 } }]
+  # Duo : GPU et machine du Spark 2, par le câble. Cibles écrites par modeles.py (vide hors duo) :
+  # WS_DIR/prometheus/cibles/spark2.json = DUO_IP_WORKER:9835 et :9100 (docker-compose.spark-worker.yml)
+  - job_name: spark2
+    file_sd_configs:
+      - files: [/etc/prometheus/cibles/spark2.json]

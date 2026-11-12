@@ -7,6 +7,7 @@
   ./scripts/modeles.py lister                    profils connus, téléchargés ou non, actif
   ./scripts/modeles.py telecharger <nom>         télécharge les poids dans ./models
   ./scripts/modeles.py utiliser <nom>            télécharge si besoin, écrit .env, redémarre vLLM, lance l'évaluation fixe
+  ./scripts/modeles.py confirmer                 après un redémarrage manuel de vLLM (duo) : attend vLLM, le note actif, évalue
   ./scripts/modeles.py historique [--a DATE]     profils activés au fil du temps (ou celui actif à une date)
 
 Un profil = les réglages vLLM d'un modèle (image, parsers, options). Les recettes viennent de
@@ -402,6 +403,10 @@ def ecrire_cible_prometheus(nom: str, mode: str) -> None:
     f = WS / "prometheus" / "cibles" / "vllm.json"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps([{"targets": ["vllm:8000"], "labels": {"profil": nom, "mode": mode}}], indent=2) + "\n")
+    # Duo : exporteurs GPU et machine du Spark 2, joints par le câble (docker-compose.spark-worker.yml)
+    worker = lire_env(PROJET / ".env").get("DUO_IP_WORKER", "") if mode == "duo" else ""
+    cibles = [{"targets": [f"{worker}:9835", f"{worker}:9100"], "labels": {"hote": "spark2"}}] if worker else []
+    (f.parent / "spark2.json").write_text(json.dumps(cibles, indent=2) + "\n")
 
 
 def lire_historique() -> list[dict]:
@@ -452,16 +457,22 @@ def cmd_utiliser(a) -> None:
     print(f"{a.env} mis à jour pour « {a.nom} »" + (f" ; .env.vllm : {', '.join(extra_env)}" if extra_env else ""))
     if a.sans_redemarrer:
         journaliser_profil("configure", a.nom, p, courant)
-        return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm")
+        return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm\n"
+                     "puis note-le comme actif (historique, métriques, évaluation) :  ./scripts/modeles.py confirmer")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
     if subprocess.run([*compose, "up", "-d", "--force-recreate", "vllm"], cwd=PROJET).returncode != 0:
         erreur("docker compose a échoué")
+    attendre_vllm(a, a.nom, p, courant, compose)
+
+
+def attendre_vllm(a, nom: str, p: dict, courant: dict, compose: list[str]) -> None:
+    """Attend que vLLM réponde, note le profil comme actif (historique, Prometheus), puis lance l'évaluation fixe."""
     print("Chargement du modèle (plusieurs minutes)…", end="", flush=True)
     fin = time.time() + 3600
     while time.time() < fin:
         etat = subprocess.run([*compose, "ps", "--format", "{{.Health}}|{{.State}}", "vllm"], cwd=PROJET, capture_output=True, text=True).stdout.strip()
         if etat.startswith("healthy"):
-            journaliser_profil("actif", a.nom, p, courant)
+            journaliser_profil("actif", nom, p, courant)
             print("\nvLLM répond. Vérification complète :  ./scripts/02-verifier-spark.sh")
             if a.sans_eval:
                 return print("Évaluation sautée. Plus tard :  ./scripts/evaluer.py")
@@ -472,8 +483,20 @@ def cmd_utiliser(a) -> None:
             break
         print(".", end="", flush=True)
         time.sleep(10)
-    journaliser_profil("echec", a.nom, p, courant)
+    journaliser_profil("echec", nom, p, courant)
     erreur("vLLM n'a pas démarré. Voir :  docker compose logs --tail 80 vllm  (et la section 9 du GUIDE)")
+
+
+def cmd_confirmer(a) -> None:
+    """Après un redémarrage de vLLM fait à la main (duo : utiliser --sans-redemarrer, puis docker compose up),
+    attend que vLLM réponde et note le profil du .env comme actif."""
+    env = PROJET / a.env
+    courant = lire_env(env)
+    nom = courant.get("VLLM_PROFIL")
+    if not nom:
+        erreur(f"VLLM_PROFIL absent de {a.env} : lance d'abord  ./scripts/modeles.py utiliser <profil> --sans-redemarrer")
+    compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
+    attendre_vllm(a, nom, lire_profil(nom), courant, compose)
 
 
 def main() -> None:
@@ -487,6 +510,7 @@ def main() -> None:
     c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--env", default=".env"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
     c = sp.add_parser("utiliser"); c.add_argument("nom"); c.add_argument("--env", default=".env")
     c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--sans-eval", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
+    c = sp.add_parser("confirmer"); c.add_argument("--env", default=".env"); c.add_argument("--sans-eval", action="store_true"); c.set_defaults(f=cmd_confirmer)
     c = sp.add_parser("historique"); c.add_argument("--a", help="date ISO (2026-11-12 ou 2026-11-12T14:30) : profil actif à ce moment"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_historique)
     a = ap.parse_args()
     global WS
