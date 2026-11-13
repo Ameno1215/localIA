@@ -25,6 +25,7 @@ from PIL import Image
 from pypdf import PdfReader
 from qdrant_client import models
 
+import journal
 from server import COLLECTION, embed, qdrant
 
 DOCS = Path("/docs")
@@ -227,9 +228,11 @@ def main():
         qdrant.create_payload_index(COLLECTION, "source", models.PayloadSchemaType.KEYWORD)
 
     total_attente = 0
+    empreintes = []
     for fichier in sorted(p for p in DOCS.rglob("*") if p.is_file()):
         source = str(fichier.relative_to(DOCS))
         empreinte = hashlib.sha256(fichier.read_bytes()).hexdigest()
+        empreintes.append(f"{source}:{empreinte}")
         filtre = models.Filter(must=[models.FieldCondition(key="source", match=models.MatchValue(value=source))])
         deja, _ = qdrant.scroll(COLLECTION, scroll_filter=filtre, limit=1)
         # Version absente ou ancienne : indexé avant les liens vers les extraits ou la lecture des images -> on réindexe
@@ -266,6 +269,11 @@ def main():
         total_attente += stats["en_attente"]
         attente = f", {stats['en_attente']} en attente" if stats["en_attente"] else ""
         print(f"+ {source} : {len(morceaux)} morceaux, {stats['images']} image(s){attente}")
+
+    # Version de l'index (documents + extraction) : le journal RAG compare les modèles à index égal
+    version = hashlib.sha256(f"v{VERSION}|{TAILLE}|{CHEVAUCHEMENT}|".encode() + "\n".join(empreintes).encode()).hexdigest()[:12]
+    journal.ecrire_version_index(f"{version} {len(empreintes)} documents, attente {total_attente}")
+    print(f"\nVersion de l'index : {version}")
 
     if total_attente:
         print(f"\n{total_attente} image(s) non lue(s) : relancer ingest.py avec un modèle vision actif "

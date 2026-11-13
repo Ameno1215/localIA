@@ -294,9 +294,17 @@ Spark 1 :
 ```bash
 docker compose pull vllm && docker compose up -d --force-recreate vllm
 docker compose logs -f vllm
+./scripts/modeles.py confirmer     # attend vLLM, note le profil actif (historique, métriques), lance l'évaluation fixe
 ```
 
 **Un nouveau modèle** : `./scripts/modeles.py telecharger <profil>` sur le Spark 1, puis le `rsync` de la section 5.4. Pour écrire un profil duo, partir de `config/modeles-spark/qwen3.8-flash-next-nvfp4-duo.env` : image avec Ray, `VLLM_GPU_UTIL=0.68`. Le passage sur deux GPU (`--tensor-parallel-size 2`) est ajouté par `scripts/spark-duo/tete.sh`, pas par le profil.
+
+### Journaux et métriques en duo
+
+Tout est sur le Spark 1 (voir GUIDE.md, « Comparer les modèles ») : Prometheus y lit vLLM (sur l'hôte) et, par le câble,
+le `gpu-exporter` et le `node-exporter` du Spark 2 (lancés par `docker-compose.spark-worker.yml`, ports 9835 et 9100,
+autorisés par la règle ufw du câble, bloqués sur le réseau de l'équipe). Leur adresse vient de `DUO_IP_WORKER` :
+`./scripts/modeles.py confirmer` (ou `utiliser`) écrit la cible. Vérifier : `curl -s 192.168.100.11:9835/metrics | head` depuis le Spark 1.
 
 ## 8. Mémoire et fenêtre de contexte
 

@@ -1,7 +1,7 @@
 """
 title: Sources docs-internes
 description: Remplace les références [a1b2c3d4] écrites par le modèle par des liens numérotés qui ouvrent le document à la bonne page, et ajoute la liste des sources.
-version: 0.2
+version: 0.3
 """
 
 # À installer dans Open WebUI : Panneau d'administration > Fonctions > + (coller ce fichier),
@@ -38,7 +38,9 @@ class Filter:
         if not codes:
             return body
         try:
-            r = requests.get(f"{self.valves.mcp_url}/refs", params={"r": ",".join(codes)}, timeout=10)
+            # journal=1 : mcp-docs note combien de références citées sont inconnues (inventées par le modèle)
+            params = {"r": ",".join(codes), "journal": "1", "modele": body.get("model") or "", "client": "openwebui"}
+            r = requests.get(f"{self.valves.mcp_url}/refs", params=params, timeout=10)
             r.raise_for_status()
             infos = r.json()
         except Exception:

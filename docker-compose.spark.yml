@@ -16,6 +16,10 @@
 #
 # Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
 
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
+
 x-vllm-pooling: &vllm-pooling
   image: ${VLLM_POOLING_IMAGE:-vllm/vllm-openai:v0.30.0}
   entrypoint: ["vllm", "serve"]
@@ -94,6 +98,10 @@ services:
       RAG_BACKEND: vllm
       # Adresse des liens « Sources » vue par le navigateur des utilisateurs (via Caddy)
       DOCS_PUBLIC_URL: https://${SPARK_HOSTNAME}
+      # Journal du RAG (ids, scores, durées) pour comparer les modèles. Questions : hash (défaut), texte ou non
+      RAG_LOG_DIR: /logs/rag
+      RAG_LOG_QUESTIONS: ${RAG_LOG_QUESTIONS:-hash}
+      RAG_LOG_RETENTION_DAYS: ${RAG_LOG_RETENTION_DAYS:-90}
     ports: !reset []
     volumes: !override
       # DOCS_DIR dans .env pour lire les normes ailleurs (ex. ./docs-internes, le dossier du projet)
@@ -101,6 +109,7 @@ services:
       - ${WS_DIR:-./ws}/workspace:/workspace
       - ./finetune:/finetune:ro
       - ${WS_DIR:-./ws}/data:/data
+      - ${WS_DIR:-./ws}/logs/rag:/logs/rag
 
   # Données persistantes dans WS_DIR (et non dans des volumes cachés du stockage Docker)
   postgres:
@@ -123,6 +132,46 @@ services:
     volumes: !override
       - ${WS_DIR:-./ws}/open-webui:/app/backend/data
 
+  # ---- Métriques (comparaison des modèles et de la pile dans le temps) : un an d'historique dans WS_DIR/prometheus.
+  # Accessible depuis le Spark seulement : http://127.0.0.1:9090 (ou tunnel SSH). Requêtes utiles dans GUIDE.md.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-365d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-20GB}
+    # root : écrit dans WS_DIR sans dépendre de l'uid du compte de service (le port n'est ouvert qu'en local)
+    user: "0:0"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${WS_DIR:-./ws}/prometheus/cibles:/etc/prometheus/cibles:ro
+      - ${WS_DIR:-./ws}/prometheus/data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    logging: *logs
+    restart: unless-stopped
+
+  # GPU via nvidia-smi (injecté par le NVIDIA Container Toolkit, capacité « utility »)
+  gpu-exporter:
+    image: python:3.12-slim
+    command: ["python", "/app/exporter.py"]
+    volumes: ["./services/gpu-exporter/exporter.py:/app/exporter.py:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu, utility] }]
+    logging: *logs
+    restart: unless-stopped
+
+  # Machine : mémoire unifiée (le LLM y vit sur le GB10), CPU, disque, réseau (dont le câble QSFP en duo)
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    logging: *logs
+    restart: unless-stopped
+
   # Seule porte d'entrée réseau. Certificat interne : distribuer la CA aux postes (voir GUIDE.md).
   caddy:
     image: caddy:2.10.2
@@ -132,6 +181,9 @@ services:
     volumes:
       - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
       - ${WS_DIR:-./ws}/caddy:/data
+      # Journaux d'accès JSON (sans en-têtes d'authentification ni corps), pour les erreurs et latences par client
+      - ${WS_DIR:-./ws}/logs/caddy:/var/log/caddy
+    logging: *logs
     ports: ["443:443", "8443:8443"]
     depends_on: [litellm, mcp-docs, open-webui]
     restart: unless-stopped

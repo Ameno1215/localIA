@@ -6,7 +6,9 @@
   ./scripts/modeles.py ajouter <id_hf> [options] crée le profil config/modeles-spark/<nom>.env d'après la recette
   ./scripts/modeles.py lister                    profils connus, téléchargés ou non, actif
   ./scripts/modeles.py telecharger <nom>         télécharge les poids dans ./models
-  ./scripts/modeles.py utiliser <nom>            télécharge si besoin, écrit .env, redémarre vLLM
+  ./scripts/modeles.py utiliser <nom>            télécharge si besoin, écrit .env, redémarre vLLM, lance l'évaluation fixe
+  ./scripts/modeles.py confirmer                 après un redémarrage manuel de vLLM (duo) : attend vLLM, le note actif, évalue
+  ./scripts/modeles.py historique [--a DATE]     profils activés au fil du temps (ou celui actif à une date)
 
 Un profil = les réglages vLLM d'un modèle (image, parsers, options). Les recettes viennent de
 recipes.vllm.ai (internet requis pour chercher/ajouter ; le reste marche hors ligne).
@@ -20,6 +22,7 @@ import math
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -366,6 +369,64 @@ def ecrire_env(chemin: Path, valeurs: dict[str, str]) -> None:
     chemin.write_text("\n".join(lignes) + "\n")
 
 
+# ----------------------------------------------------------------------------- historique des profils
+# Tous les profils sont servis sous le même nom (qwen-local) : sans ce journal, aucun log (LiteLLM, Open WebUI,
+# métriques) ne dit quel modèle a répondu. Une ligne JSON par changement, dans WS_DIR/logs/profils.jsonl.
+
+def journal_profils() -> Path:
+    return WS / "logs" / "profils.jsonl"
+
+
+def journaliser_profil(evenement: str, nom: str, p: dict, courant: dict) -> None:
+    compose = courant.get("COMPOSE_FILE", "")
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=PROJET, capture_output=True, text=True).stdout.strip()
+    except OSError:
+        commit = ""
+    ligne = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "evenement": evenement, "profil": nom,
+        "modele_hf": p.get("MODELE_HF", ""), "mode": "duo" if "spark-duo" in compose else "simple",
+        "hote": socket.gethostname(), "commit": commit,
+        **{k.lower(): p.get(k, "") for k in CLES_ENV}, "vllm_lora_args": courant.get("VLLM_LORA_ARGS", ""),
+    }
+    f = journal_profils()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    with f.open("a") as sortie:
+        sortie.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+    if evenement != "echec":
+        ecrire_cible_prometheus(nom, ligne["mode"])
+
+
+def ecrire_cible_prometheus(nom: str, mode: str) -> None:
+    """Cible vLLM de Prometheus avec le profil en label : les métriques se comparent par modèle.
+    Prometheus relit ce fichier tout seul (file_sd), sans redémarrage."""
+    f = WS / "prometheus" / "cibles" / "vllm.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps([{"targets": ["vllm:8000"], "labels": {"profil": nom, "mode": mode}}], indent=2) + "\n")
+    # Duo : exporteurs GPU et machine du Spark 2, joints par le câble (docker-compose.spark-worker.yml)
+    worker = lire_env(PROJET / ".env").get("DUO_IP_WORKER", "") if mode == "duo" else ""
+    cibles = [{"targets": [f"{worker}:9835", f"{worker}:9100"], "labels": {"hote": "spark2"}}] if worker else []
+    (f.parent / "spark2.json").write_text(json.dumps(cibles, indent=2) + "\n")
+
+
+def lire_historique() -> list[dict]:
+    f = journal_profils()
+    if not f.exists():
+        return []
+    return [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+
+
+def cmd_historique(a) -> None:
+    lignes = lire_historique()
+    if not lignes:
+        erreur(f"aucun historique dans {journal_profils()} (il se remplit à chaque « utiliser »)")
+    if a.a:
+        actifs = [l for l in lignes if l["evenement"] == "actif" and l["ts"][:len(a.a)] <= a.a]
+        return print(json.dumps(actifs[-1], ensure_ascii=False, indent=2) if actifs else "aucun profil actif connu à cette date")
+    for l in lignes:
+        print(f"{l['ts']}  {l['evenement']:8} {l['mode']:6} {l['profil']}  ({l.get('modele_hf', '')})")
+
+
 def cmd_utiliser(a) -> None:
     p = lire_profil(a.nom)
     env = PROJET / a.env
@@ -378,7 +439,7 @@ def cmd_utiliser(a) -> None:
         erreur(f"{a.env} n'est pas un .env de Spark (COMPOSE_FILE absent) : ce script règle le Spark, pas le PC de test. --force pour passer outre.")
     if courant.get("VLLM_LORA_ARGS"):
         print("⚠ VLLM_LORA_ARGS est rempli : une LoRA entraînée sur un autre modèle ne fonctionne pas avec celui-ci. Vide-le ou réentraîne.")
-    ecrire_env(env, {k: p.get(k, "") for k in CLES_ENV})
+    ecrire_env(env, {k: p.get(k, "") for k in CLES_ENV} | {"VLLM_PROFIL": a.nom})
     # Réglages Docker propres au modèle (mémoire partagée, limites, sécurité) : fichier généré, retiré au changement de modèle
     extra_compose = PROJET / ".compose.vllm.yml"
     fichiers = [f for f in courant.get("COMPOSE_FILE", "").split(":") if f and f != extra_compose.name]
@@ -395,21 +456,47 @@ def cmd_utiliser(a) -> None:
     fichier_env.write_text("".join(f"{k}={val}\n" for k, val in extra_env.items()))
     print(f"{a.env} mis à jour pour « {a.nom} »" + (f" ; .env.vllm : {', '.join(extra_env)}" if extra_env else ""))
     if a.sans_redemarrer:
-        return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm")
+        journaliser_profil("configure", a.nom, p, courant)
+        return print("Redémarre vLLM quand tu veux :  docker compose up -d --force-recreate vllm\n"
+                     "puis note-le comme actif (historique, métriques, évaluation) :  ./scripts/modeles.py confirmer")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
     if subprocess.run([*compose, "up", "-d", "--force-recreate", "vllm"], cwd=PROJET).returncode != 0:
         erreur("docker compose a échoué")
+    attendre_vllm(a, a.nom, p, courant, compose)
+
+
+def attendre_vllm(a, nom: str, p: dict, courant: dict, compose: list[str]) -> None:
+    """Attend que vLLM réponde, note le profil comme actif (historique, Prometheus), puis lance l'évaluation fixe."""
     print("Chargement du modèle (plusieurs minutes)…", end="", flush=True)
     fin = time.time() + 3600
     while time.time() < fin:
         etat = subprocess.run([*compose, "ps", "--format", "{{.Health}}|{{.State}}", "vllm"], cwd=PROJET, capture_output=True, text=True).stdout.strip()
         if etat.startswith("healthy"):
-            return print("\nvLLM répond. Vérification complète :  ./scripts/02-verifier-spark.sh")
+            journaliser_profil("actif", nom, p, courant)
+            print("\nvLLM répond. Vérification complète :  ./scripts/02-verifier-spark.sh")
+            if a.sans_eval:
+                return print("Évaluation sautée. Plus tard :  ./scripts/evaluer.py")
+            print("Évaluation fixe du profil (10 à 15 min, Ctrl+C pour l'interrompre sans risque) :  ./scripts/evaluer.py")
+            subprocess.run([sys.executable, str(PROJET / "scripts" / "evaluer.py"), "--env", a.env], cwd=PROJET)
+            return
         if "exited" in etat or "dead" in etat:
             break
         print(".", end="", flush=True)
         time.sleep(10)
+    journaliser_profil("echec", nom, p, courant)
     erreur("vLLM n'a pas démarré. Voir :  docker compose logs --tail 80 vllm  (et la section 9 du GUIDE)")
+
+
+def cmd_confirmer(a) -> None:
+    """Après un redémarrage de vLLM fait à la main (duo : utiliser --sans-redemarrer, puis docker compose up),
+    attend que vLLM réponde et note le profil du .env comme actif."""
+    env = PROJET / a.env
+    courant = lire_env(env)
+    nom = courant.get("VLLM_PROFIL")
+    if not nom:
+        erreur(f"VLLM_PROFIL absent de {a.env} : lance d'abord  ./scripts/modeles.py utiliser <profil> --sans-redemarrer")
+    compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
+    attendre_vllm(a, nom, lire_profil(nom), courant, compose)
 
 
 def main() -> None:
@@ -422,7 +509,9 @@ def main() -> None:
     c = sp.add_parser("lister"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_lister)
     c = sp.add_parser("telecharger"); c.add_argument("nom"); c.add_argument("--env", default=".env"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_telecharger)
     c = sp.add_parser("utiliser"); c.add_argument("nom"); c.add_argument("--env", default=".env")
-    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
+    c.add_argument("--sans-redemarrer", action="store_true"); c.add_argument("--sans-telecharger", action="store_true"); c.add_argument("--sans-eval", action="store_true"); c.add_argument("--force", action="store_true"); c.set_defaults(f=cmd_utiliser)
+    c = sp.add_parser("confirmer"); c.add_argument("--env", default=".env"); c.add_argument("--sans-eval", action="store_true"); c.set_defaults(f=cmd_confirmer)
+    c = sp.add_parser("historique"); c.add_argument("--a", help="date ISO (2026-11-12 ou 2026-11-12T14:30) : profil actif à ce moment"); c.add_argument("--env", default=".env"); c.set_defaults(f=cmd_historique)
     a = ap.parse_args()
     global WS
     env = Path(getattr(a, "env", ".env"))

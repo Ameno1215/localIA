@@ -3,8 +3,21 @@
 #   https://<SPARK_HOSTNAME>/mcp     -> recherche dans les normes (jeton d'équipe MCP_TOKEN)
 #   https://<SPARK_HOSTNAME>/x/…     -> sources citées dans les réponses : l'extrait, puis /docs/… le PDF (lecture seule)
 #   https://<SPARK_HOSTNAME>:8443    -> Open WebUI (chat web, comptes personnels)
+# Journal d'accès JSON, roulé (50 Mo x 10, 90 jours). Caddy masque déjà Authorization et Cookie ; aucun corps n'est écrit.
+(journal) {
+	log {
+		output file /var/log/caddy/{args[0]}.log {
+			roll_size 50MiB
+			roll_keep 10
+			roll_keep_for 2160h
+		}
+		format json
+	}
+}
+
 {$SPARK_HOSTNAME} {
 	tls internal
+	import journal api
 
 	handle /mcp* {
 		@autorise header Authorization "Bearer {$MCP_TOKEN}"
@@ -28,5 +41,6 @@
 # Open WebUI sur son propre port : l'application ne fonctionne pas sous un sous-chemin (/chat)
 {$SPARK_HOSTNAME}:8443 {
 	tls internal
+	import journal webui
 	reverse_proxy open-webui:8080
 }

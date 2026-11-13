@@ -14,10 +14,12 @@ sec() { printf '\n===== %s =====\n' "$1"; }
   sec "conteneurs"; docker compose ps -a --format 'table {{.Service}}\t{{.Status}}\t{{.Image}}' 2>&1
   sec "images"; docker images --format '{{.Repository}}:{{.Tag}}  {{.Size}}' | head -30
   sec "réglages vLLM du .env (sans secrets)"
-  grep -E '^(COMPOSE_FILE|VLLM_|MCP_OUTILS_CODE|SPARK_HOSTNAME)' .env 2>/dev/null | sed -E 's/^(MCP_TOKEN)=.*/\1=…/'
+  grep -E '^(COMPOSE_FILE|VLLM_|MCP_OUTILS_CODE|SPARK_HOSTNAME)' .env 2>/dev/null | sed -E 's/^(MCP_TOKEN|VLLM_API_KEY)=.*/\1=…/'
   sec "variables présentes dans le .env (noms seulement)"; sed -E 's/=.*/=…/' .env 2>/dev/null | grep -v '^#' | grep -v '^$'
   sec "modèles téléchargés"; WS="$(grep -s -E '^WS_DIR=' .env | cut -d= -f2-)"; echo "WS_DIR=${WS:-<non défini>}"; ls "${WS:-.}/models" 2>&1; df -h "${WS:-.}" | tail -1
   sec "profil actif"; python3 scripts/modeles.py lister 2>&1 | head -15
+  sec "historique des profils (10 derniers)"; python3 scripts/modeles.py historique 2>&1 | tail -10
+  sec "erreurs HTTP 5xx récentes (Caddy)"; grep -h '"status":5' "${WS:-./ws}"/logs/caddy/*.log 2>/dev/null | tail -20 | cut -c1-400
   for s in vllm tei-embed tei-rerank mcp-docs caddy; do sec "journal $s (150 dernières lignes)"; docker compose logs --no-color --tail 150 "$s" 2>&1; done
 } > "$OUT" 2>&1
 echo "Diagnostic écrit dans $OUT ($(wc -l < "$OUT") lignes). Relis-le avant de le transmettre."
