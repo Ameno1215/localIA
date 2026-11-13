@@ -1,0 +1,57 @@
+# Prometheus du serveur annexe (docker-compose.serveur.yml) : mêmes séries et mêmes labels que sur le Spark
+# (config/prometheus/prometheus.yml), pour que l'historique continue et que les requêtes du GUIDE restent valables.
+#
+# Les Spark sont joints par le réseau de l'équipe ; leurs cibles sont écrites sur le Spark 1 par
+#   ./scripts/modeles.py utiliser|confirmer   (ANNEXE_SSH dans son .env)  puis copiées ici par SSH :
+#   cibles/vllm.json    IP_SPARK1:8000, labels profil, mode, pile
+#   cibles/spark1.json  IP_SPARK1:9835 et :9100 (hote: spark1)
+#   cibles/spark2.json  IP_SPARK2:9835 et :9100 (hote: spark2), vide hors duo
+# Prometheus relit ces fichiers tout seul (file_sd), sans redémarrage.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # LLM. /metrics n'exige pas VLLM_API_KEY (seul /v1 la demande) ; ufw n'ouvre le port 8000 qu'au serveur.
+  - job_name: vllm
+    file_sd_configs:
+      - files: [/etc/prometheus/cibles/vllm.json]
+
+  # Embeddings et reranker : TEI expose ses métriques sur le port 9000 (te_request_duration, te_queue_size…)
+  - job_name: tei
+    static_configs:
+      - targets: ["tei-embed:9000"]
+        labels: { service: embeddings }
+      - targets: ["tei-rerank:9000"]
+        labels: { service: reranker }
+
+  - job_name: qdrant
+    static_configs:
+      - targets: ["qdrant:6333"]
+
+  # GPU et machine des Spark : mêmes noms de job que sur le Spark (gpu, machine, spark2) pour garder les séries
+  - job_name: gpu
+    file_sd_configs:
+      - files: [/etc/prometheus/cibles/spark1.json]
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: ".*:9835"
+        action: keep
+
+  - job_name: machine
+    file_sd_configs:
+      - files: [/etc/prometheus/cibles/spark1.json]
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: ".*:9100"
+        action: keep
+
+  - job_name: spark2
+    file_sd_configs:
+      - files: [/etc/prometheus/cibles/spark2.json]
+
+  # Le serveur annexe lui-même
+  - job_name: serveur
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels: { hote: serveur }

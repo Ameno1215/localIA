@@ -2,6 +2,7 @@
 # Télécharge les poids dans <WS_DIR>/models (./models si WS_DIR n'est pas défini dans .env) — à faire avec internet.
 #   ./scripts/01-telecharger-modeles.sh           # PC de test (~25 Go)
 #   ./scripts/01-telecharger-modeles.sh --spark   # DGX Spark (~82 Go)
+#   ./scripts/01-telecharger-modeles.sh --serveur # serveur annexe : embeddings et reranker pour TEI sur CPU (~5 Go)
 # Ensuite tout tourne hors ligne (HF_HUB_OFFLINE=1 dans les conteneurs).
 # Pour le réseau fermé : copie le dossier models sur disque externe, avec sha256sum.txt pour vérifier.
 set -euo pipefail
@@ -13,7 +14,7 @@ if [ -e .env ] && [ ! -r .env ]; then
   exit 1
 fi
 WS_DIR="$(grep -s -E '^WS_DIR=' .env | cut -d= -f2- || true)"
-if [ "${1:-}" = "--spark" ] && [ -z "$WS_DIR" ]; then
+if { [ "${1:-}" = "--spark" ] || [ "${1:-}" = "--serveur" ]; } && [ -z "$WS_DIR" ]; then
   echo "Crée d'abord le .env du Spark : ./scripts/preparer-env-spark.sh <nom-du-serveur> [dossier-des-données]"
   exit 1
 fi
@@ -43,6 +44,9 @@ if [ "${1:-}" = "--spark" ]; then
   # Modèle principal : profil par défaut, Nemotron 3.5 Super VL (MoE 120B, 12B actifs, NVFP4, 75 Go + brouillon 1,3 Go).
   # Autres modèles : ./scripts/modeles.py lister | chercher | ajouter | utiliser
   python3 scripts/modeles.py telecharger nemotron-3.5-super-vl-120b-a12b-nvfp4
+elif [ "${1:-}" = "--serveur" ]; then
+  # Serveur annexe (SERVEUR-ANNEXE.md) : TEI sur CPU -> version ONNX, comme sur le PC. Pas de LLM ici.
+  hf download BAAI/bge-m3 --local-dir "$DEST"/bge-m3 --exclude 'pytorch_model.bin' --exclude 'imgs/*' --exclude '*.jpg' --exclude '*.pt'
 else
   # PC : embeddings sur CPU via TEI -> version ONNX (~2.3 Go)
   hf download BAAI/bge-m3 --local-dir "$DEST"/bge-m3 --exclude 'pytorch_model.bin' --exclude 'imgs/*' --exclude '*.jpg' --exclude '*.pt'
