@@ -27,3 +27,6 @@ workspace/
 
 # Rapports de diagnostic (scripts/diagnostic-spark.sh)
 diagnostic-spark-*.txt
+
+# Benchmarks publics sans WS_DIR (scripts/bench-public.py) : jeux téléchargés, réponses des modèles
+/benchmarks/

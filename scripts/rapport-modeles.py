@@ -12,6 +12,8 @@ Sources (toutes en lecture seule) :
   WS_DIR/logs/rag/rag-*.jsonl     recherches RAG (durées, scores) et références inventées
   Prometheus (127.0.0.1:9090)     TTFT et latence p95 mesurés par vLLM, puissance GPU
   WS_DIR/evals/*.resume.json      dernières évaluations fixes (scripts/evaluer.py)
+  WS_DIR/benchmarks/resultats/*.resume.json   benchmarks publics (scripts/bench-public.py), moyennés par
+                                  profil + installation + préréglage, dans un second tableau
 
 Seuls des agrégats sont affichés : ni prompt, ni conversation, ni nom d'utilisateur.
 Bibliothèque standard uniquement.
@@ -205,6 +207,45 @@ def evals(ws: Path) -> dict[str, dict]:
     return res
 
 
+def benchmarks(ws: Path, depuis: float) -> list[dict]:
+    """Benchmarks publics : une colonne par (profil, installation, préréglage), moyenne de toutes ses exécutions.
+    Deux exécutions ne se moyennent que si l'installation (image, contexte, options vLLM, raisonnement, RAG…) et les
+    jeux du préréglage sont identiques : sinon ce sont deux colonnes."""
+    groupes: dict[tuple, list[dict]] = {}
+    for f in sorted((ws / "benchmarks" / "resultats").glob("*.resume.json")):
+        r = json.loads(f.read_text())
+        if datetime.strptime(r["date"], "%Y-%m-%d_%H%M").timestamp() < depuis:
+            continue
+        groupes.setdefault((r["profil"], r["config"], r["preset"], r.get("jeux")), []).append(r)
+    res = []
+    for (profil, config, preset, _), runs in groupes.items():
+        inst = runs[-1].get("installation") or {}
+        ligne = {"colonne": f"{profil} · {preset} · {config}", "mode": inst.get("mode"),
+                 "raisonnement": "oui" if inst.get("raisonnement", True) else "non",
+                 "executions": len(runs), "derniere": runs[-1]["date"]}
+        valeurs: dict[str, list[float]] = {}
+        for r in runs:
+            for k, v in (r.get("scores") or {}).items():
+                if isinstance(v, (int, float)):
+                    valeurs.setdefault(k, []).append(v)
+        for k in sorted(valeurs):
+            v = valeurs[k]
+            ligne[k] = arrondi(statistics.mean(v), 1)
+            if len(v) > 1:  # écart entre exécutions : un écart entre modèles plus petit que ça n'est pas significatif
+                ligne[f"{k} ±"] = arrondi(statistics.stdev(v), 1)
+        res.append(ligne)
+    return res
+
+
+def tableau(lignes: list[dict], titre: str) -> list[str]:
+    cles = list(dict.fromkeys(k for l in lignes for k in l))
+    print("| " + titre + " | " + " | ".join(str(l[cles[0]]) for l in lignes) + " |")
+    print("|---|" + "---|" * len(lignes))
+    for k in cles[1:]:
+        print(f"| {k} | " + " | ".join("" if l.get(k) is None else str(l.get(k)) for l in lignes) + " |")
+    return cles
+
+
 # ----------------------------------------------------------------------------- rapport
 
 def arrondi(x, n=2):
@@ -295,20 +336,23 @@ def main() -> None:
             ligne |= {"eval_date": r.get("date"), **{f"eval_{k}": v for k, v in (r.get("scores") or {}).items()}}
         lignes.append(ligne)
 
-    if not lignes:
+    bancs = benchmarks(ws, depuis)
+    if not lignes and not bancs:
         sys.exit("Aucune donnée : la pile a-t-elle servi des requêtes depuis l'activation du journal ?")
-    cles = list(dict.fromkeys(k for l in lignes for k in l))
     # Markdown transposé : une colonne par profil, plus lisible avec beaucoup de mesures
-    print("| mesure | " + " | ".join(l["profil"] for l in lignes) + " |")
-    print("|---|" + "---|" * len(lignes))
-    for k in cles[1:]:
-        print(f"| {k} | " + " | ".join("" if l.get(k) is None else str(l.get(k)) for l in lignes) + " |")
+    cles = tableau(lignes, "mesure") if lignes else []
+    if bancs:
+        print("\n## Benchmarks publics (scripts/bench-public.py)\n")
+        tableau(bancs, "mesure")
     if a.csv:
-        with open(a.csv, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=cles)
-            w.writeheader()
-            w.writerows(lignes)
-        print(f"\nCSV : {a.csv}", file=sys.stderr)
+        for donnees, fichier in ((lignes, a.csv), (bancs, a.csv.removesuffix(".csv") + "-benchmarks.csv")):
+            if not donnees:
+                continue
+            with open(fichier, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=list(dict.fromkeys(k for l in donnees for k in l)))
+                w.writeheader()
+                w.writerows(donnees)
+            print(f"\nCSV : {fichier}", file=sys.stderr)
 
 
 if __name__ == "__main__":
