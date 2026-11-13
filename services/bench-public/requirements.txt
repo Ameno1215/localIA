@@ -1,0 +1,14 @@
+# Benchmarks publics (volet 1). Versions figées : un changement de version change les scores.
+lm_eval[api,ifeval]==0.4.13
+evalplus==0.3.1
+datasets==5.2.0
+transformers==5.23.0
+sentencepiece
+tiktoken==0.14.0
+numpy==2.5.4
+# RULER (lm-eval) : génération des textes longs
+html2text
+httpx
+beautifulsoup4
+wonderwords
+scipy

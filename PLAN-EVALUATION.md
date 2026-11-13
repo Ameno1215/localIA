@@ -4,8 +4,14 @@ But : savoir, **pour chaque usage de l'équipe** (OS de carte à puce, embarqué
 (latence, mémoire, utilisateurs simultanés), et suivre l'évolution dans le temps. Tout tourne **en local** : le code et les
 documents internes ne sortent jamais du Spark, y compris pour la notation (pas de juge dans le cloud).
 
-Ce document est un plan : rien n'est encore implémenté au-delà de l'existant (PR #13). Il dit quoi construire, dans quel ordre,
-et ce qui doit être décidé avant.
+Deux volets :
+
+- **Volet 1, benchmarks publics** (§ 2, **implémenté** : `scripts/bench-public.py`) : jeux reconnus et automatiques, sans rien
+  écrire. On lance, on attend, on compare les modèles et les installations. Premier avis rapide, mais générique.
+- **Volet 2, nos cas d'usage** (§ 3 à 6, à construire) : OS de carte à puce, normes, C embarqué, exigences, notre RAG. C'est
+  lui qui décide, mais il demande des jeux tirés de notre code et de nos documents.
+
+Le § 7 liste les décisions à prendre, le § 8 l'ordre de mise en place.
 
 ## 1. Point de départ
 
@@ -14,7 +20,8 @@ Ce qui existe déjà sur `spark-duo` :
 | Élément | Ce qu'il fait | Limite pour la comparaison |
 |---|---|---|
 | `scripts/evaluer.py` | Jeux `normes` (vrai RAG + faits attendus en regex + source citée), `outils` (appel d'outil ou non), `code` (pytest dans un conteneur sans réseau), `charge` (même prompt à 1/4/8 en parallèle) | 6 + 4 + 4 cas d'exemple : aucune différence entre modèles n'est significative. Code en Python seulement. Température 0 imposée. |
-| `scripts/rapport-modeles.py` | Une ligne par profil : trafic réel LiteLLM, pouces Open WebUI, journal RAG, Prometheus, dernière évaluation | Ne garde que **le dernier** `.resume.json` par profil : une seconde évaluation écrase la première dans le rapport, pas de moyenne ni de dispersion. |
+| `scripts/rapport-modeles.py` | Une ligne par profil : trafic réel LiteLLM, pouces Open WebUI, journal RAG, Prometheus, dernière évaluation | Ne garde que **le dernier** `.resume.json` d'`evaluer.py` par profil : une seconde évaluation écrase la première dans le rapport. (Les benchmarks publics du volet 1, eux, sont moyennés.) |
+| `scripts/bench-public.py` (cette PR) | Volet 1 : benchmarks publics, préréglages rapide et complet, résultats par profil et installation | Générique : ne dit rien de notre domaine. |
 | `WS_DIR/logs/profils.jsonl` | Quel profil était actif quand | — |
 | `WS_DIR/logs/rag/rag-*.jsonl` | Chaque recherche : candidats, scores vecteur et rerank, retenus, durées | La configuration RAG (version d'index, modèle d'embedding, reranker, taille des morceaux, top-k) n'est pas notée dans les résultats d'évaluation. |
 | Prometheus | TTFT, latence, file d'attente, jetons générés, puissance GPU | Cache KV, préemptions et cache de préfixe pas encore exploités dans le rapport. |
@@ -23,9 +30,87 @@ Ce qui existe déjà sur `spark-duo` :
 Principe retenu : **étendre `evaluer.py` plutôt que d'adopter un gros framework**, et n'utiliser les outils externes que là où
 ils apportent quelque chose qu'on ne refera pas mieux (benchmarks publics, tests de charge, RAG).
 
-## 2. Règles communes à tous les jeux
+## 2. Volet 1 : benchmarks publics (implémenté)
 
-### 2.1 Données : publiques, synthétiques, internes
+But : un premier avis **sans rien écrire ni rien exposer**, en ne payant que le temps de calcul. Il compare les profils et
+les installations (simple ou duo, quantification, options vLLM, raisonnement activé ou non, reranker local ou déporté) sur
+des jeux publics reconnus. Il ne dit pas quel modèle connaît le mieux nos normes ou notre code : c'est le volet 2.
+
+### 2.1 Ce qui tourne
+
+| Famille | Benchmark | Ce qu'il dit | Notation |
+|---|---|---|---|
+| connaissances | MMLU-Pro (ingénierie, informatique ; tout en complet), GPQA Diamond | Raisonnement technique général | Lettre extraite, exacte |
+| consignes | IFEval | Respect des consignes de forme (longueur, format, mots imposés) | Vérifications automatiques |
+| code | HumanEval+ et MBPP+ (EvalPlus), HumanEval C++ (MultiPL-E) | Écrire une fonction correcte | Tests exécutés, conteneur sans réseau |
+| agent | Aider polyglot (C++ seul en rapide ; C++, Python, Go, Rust, Java, JS en complet) | Modifier des fichiers, corriger après l'échec des tests | Tests de l'exercice, 2 essais |
+| contexte | RULER (aiguilles, suivi de variables ; 8 k à 128 k), LongBench v2 (complet) | La qualité tient-elle quand le contexte grandit | Exacte / choix multiple |
+| rag | BEIR : SciFact (rapide), + NFCorpus, FiQA (complet) | Les embeddings et le reranker de mcp-docs remontent-ils les bons passages | nDCG@10, rappel, MRR, avant et après rerank |
+| charge | `vllm bench serve` : requêtes « chat » (1 k → 500 jetons) et « agent » (32 k → 800) | Latence et débit selon le nombre d'utilisateurs | TTFT, temps par jeton, goodput, cache KV, préemptions |
+
+MultiPL-E n'a **pas de variante C** : le plus proche est C++. Le C embarqué est couvert par le volet 2.
+
+### 2.2 Préréglages
+
+- **`rapide`** (par défaut) : sous-ensembles fixes, toujours les mêmes questions. Compter environ 1 h pour un modèle rapide
+  et jusqu'à 3 h pour un gros modèle qui réfléchit longtemps ; `--sans agent` retire Aider, la famille la plus longue.
+- **`complet`** : jeux entiers (MMLU-Pro limité à 100 questions par matière), RULER jusqu'à 128 k, LongBench v2, trois jeux
+  BEIR, balayage de charge de 1 à 32 utilisateurs. Une nuit.
+
+Les sous-ensembles sont dans `PRESETS` en tête de `scripts/bench-public.py`. Les modifier rend les anciens résultats
+incomparables : le rapport ne moyenne que des exécutions au préréglage identique.
+
+### 2.3 Lancer
+
+```bash
+./scripts/bench-public.py preparer               # une fois, avec Internet : images Docker et jeux de données
+./scripts/bench-public.py lancer                 # profil actif, préréglage rapide
+./scripts/bench-public.py lancer --preset complet --note "après passage en duo"
+./scripts/bench-public.py lancer --sans-raisonnement --seulement connaissances,code   # même modèle, sans réflexion
+./scripts/rapport-modeles.py                     # second tableau : benchmarks publics
+```
+
+- Le modèle est appelé **directement sur vLLM** (127.0.0.1:8000) : le trafic de banc ne fausse pas les statistiques du
+  trafic réel que LiteLLM enregistre. `--via-litellm` pour mesurer aussi la passerelle.
+- Tout tourne dans des conteneurs (`services/bench-public/`, image Aider construite depuis son dépôt à une version figée).
+  Le code produit par le modèle pour EvalPlus et MultiPL-E est exécuté dans un conteneur **sans réseau**. Aider exécute
+  ses tests dans son propre conteneur, qui a besoin du réseau de l'hôte pour joindre vLLM.
+- Après `preparer`, plus rien n'est téléchargé, sauf pour RULER : lm-eval récupère à chaque génération une liste de textes
+  publics (essais de Paul Graham) sur GitHub.
+- GPQA est soumis à conditions : accepter sur huggingface.co (`Idavidrein/gpqa`) et fournir `HF_TOKEN` à `preparer`.
+  Sans cela, les autres jeux se préparent quand même.
+- Budget de sortie par défaut : 16 384 jetons par réponse, réflexion comprise (`--max-tokens`). Les réponses coupées sont
+  comptées (`tronquees_pct`) : un modèle qui réfléchit trop longtemps est pénalisé, comme en usage réel.
+
+### 2.4 Résultats et comparaison
+
+Chaque exécution écrit `WS_DIR/benchmarks/resultats/<date>_<profil>/` (réponses brutes, détail par famille) et
+`<date>_<profil>.resume.json` avec :
+
+- l'**installation** : profil, simple ou duo, image vLLM, contexte, `gpu_util`, nombre de séquences, options vLLM et
+  spéculatives, `.env.vllm`, raisonnement, budget de jetons, configuration RAG vue par mcp-docs (embeddings, reranker,
+  local ou serveur annexe) ; son empreinte (`config`) identifie l'installation ;
+- l'empreinte des jeux du préréglage, le commit, l'hôte, une note libre ;
+- toutes les mesures, sauvegardées après chaque famille (une exécution interrompue garde ce qui est fait).
+
+`rapport-modeles.py` affiche une colonne par **profil × installation × préréglage**, avec la moyenne de toutes les
+exécutions et, dès qu'il y en a deux, leur écart-type. Un écart entre deux modèles plus petit que cet écart-type n'est
+pas une différence.
+
+### 2.5 Ce que ce volet ne dit pas
+
+- Les jeux publics sont en anglais, majoritairement en Python, et certains ont pu être vus à l'entraînement des modèles
+  récents (HumanEval, MMLU). Ils détectent un modèle cassé, mal quantifié ou mal configuré (parser d'outils, raisonnement),
+  et classent grossièrement ; ils ne départagent pas deux bons modèles sur notre métier.
+- La charge est mesurée avec des requêtes synthétiques de taille fixe. Le mélange réel (sessions OpenCode longues plus
+  questions courtes) est au volet 2 (§ 5.1).
+- Non branchés pour l'instant : **SWE-bench Verified** (images Docker x86, des heures de calcul : à envisager sur le
+  serveur annexe s'il est x86), **LiveCodeBench** et **BigCodeBench** (plus durs, utiles si HumanEval+ sature au-dessus
+  de 90 %), **MTEB** (redondant avec BEIR pour notre besoin, sauf jeux en français à ajouter plus tard).
+
+## 3. Volet 2 : règles communes à nos jeux
+
+### 3.1 Données : publiques, synthétiques, internes
 
 Chaque cas porte un champ `origine` :
 
@@ -42,22 +127,22 @@ Les benchmarks publics servent de **garde-fou** (le modèle n'est pas cassé, le
 pas dégradé le raisonnement). Ils ne décident pas : sur les usages qui comptent, seuls nos cas `interne` et `synthetique`
 représentent notre métier (C embarqué, ISO 7816, GlobalPlatform, Java Card, contraintes mémoire).
 
-### 2.2 Taille minimale
+### 3.2 Taille minimale
 
 Avec 6 questions, un modèle qui en réussit 5 et un autre 4 ne sont pas distinguables. Pour départager deux modèles proches
 il faut **au moins 50 cas par usage**, idéalement 100. Le rapport affichera un intervalle de confiance (bootstrap à 95 %)
 et signalera les écarts non significatifs.
 
-### 2.3 Méthodes de notation, de la plus fiable à la moins fiable
+### 3.3 Méthodes de notation, de la plus fiable à la moins fiable
 
 1. **Exécution** : le code compile, les tests passent, la couverture mesurée par gcov augmente. Aucune ambiguïté.
 2. **Correspondance exacte ou structurée** : identifiant d'exigence, numéro de ligne, choix QCM, statut APDU, ensemble de liens.
    Précision, rappel, F1.
 3. **Faits attendus** (regex ou liste de points clés), comme `normes.jsonl` aujourd'hui.
-4. **LLM juge**, seulement quand rien d'objectif n'existe (qualité d'une explication, d'une doc). Avec précautions (§ 2.4).
+4. **LLM juge**, seulement quand rien d'objectif n'existe (qualité d'une explication, d'une doc). Avec précautions (§ 3.4).
 5. **Revue humaine** : pour calibrer le juge et pour trancher entre les deux finalistes.
 
-### 2.4 Utiliser un LLM juge sans se tromper
+### 3.4 Utiliser un LLM juge sans se tromper
 
 - Juge = le plus gros modèle local (aujourd'hui Nemotron 3.5 Super 120B), servi **à part** de l'évaluation : on génère d'abord
   toutes les réponses de tous les profils, puis on charge le juge et on note tout en une passe. Les réponses sont stockées,
@@ -69,7 +154,7 @@ et signalera les écarts non significatifs.
 - **Calibration** : 30 à 50 jugements doublés par un humain ; on publie l'accord (kappa de Cohen). Sous 0,6, le juge n'est
   pas utilisé pour cet usage.
 
-### 2.5 Ce qu'on enregistre pour chaque exécution
+### 3.5 Ce qu'on enregistre pour chaque exécution
 
 Ajouts au `.resume.json` (et à chaque ligne du `.jsonl`) :
 
@@ -82,25 +167,25 @@ Ajouts au `.resume.json` (et à chaque ligne du `.jsonl`) :
 `rapport-modeles.py` agrège **toutes** les exécutions d'un même profil et d'une même configuration (moyenne, écart, nombre
 d'exécutions) au lieu de garder la dernière.
 
-### 2.6 Échantillonnage
+### 3.6 Échantillonnage
 
 `evaluer.py` force aujourd'hui température 0 et graine 1. Les modèles de raisonnement (Qwen3.x, Nemotron) sont réglés pour
 leurs paramètres recommandés et se dégradent souvent en greedy (boucles, réponses tronquées). Proposition : chaque profil déclare
 ses paramètres recommandés, l'évaluation les utilise, et chaque cas est tiré **3 fois** (pass@1 moyen et pass@3). La
-température 0 reste disponible en option pour les tests de régression rapides. *À décider (§ 6).*
+température 0 reste disponible en option pour les tests de régression rapides. *À décider (§ 7).*
 
-### 2.7 Deux niveaux d'exécution
+### 3.7 Deux niveaux d'exécution
 
 - **Rapide** (~15 min) : lancé automatiquement par `modeles.py utiliser`, comme aujourd'hui. Sous-ensemble fixe de chaque jeu
   (10 cas par usage) + charge à 1/4/8. Sert à détecter une régression.
-- **Complet** (une nuit) : tous les cas, 3 tirages, juge, benchmarks publics, balayage de charge et de contexte. Lancé à la
-  main ou par minuterie systemd quand le Spark est libre. Sert à comparer.
+- **Complet** (une nuit) : tous les cas, 3 tirages, juge, balayage de charge et de contexte. Lancé à la main ou par
+  minuterie systemd quand le Spark est libre, à la suite de `bench-public.py lancer --preset complet`. Sert à comparer.
 
-## 3. Cas d'usage
+## 4. Volet 2 : cas d'usage
 
 Pour chaque usage : ce qu'on mesure, le jeu de données, ce qu'on peut réutiliser, la notation et les métriques.
 
-### 3.1 Questions techniques et problèmes d'ingénierie
+### 4.1 Questions techniques et problèmes d'ingénierie
 
 **Mesure** : exactitude sur notre domaine (ISO 7816-3/4, ISO 14443, GlobalPlatform, Java Card, EMV, Critères Communs,
 contraintes mémoire et énergie d'une carte), capacité à raisonner sur un problème d'ingénierie, à dire « je ne sais pas ».
@@ -112,15 +197,15 @@ contraintes mémoire et énergie d'une carte), capacité à raisonner sur un pro
 - 10 % de questions **sans réponse dans nos documents** ou à prémisse fausse : on attend un refus ou une correction.
 - Le jeu `normes` actuel en devient un sous-ensemble (questions qui exigent le RAG).
 
-**Réutilisable** : MMLU-Pro (catégories ingénierie et informatique) et GPQA Diamond via `lm-evaluation-harness` en mode
-`local-chat-completions` vers LiteLLM, comme garde-fou de raisonnement général uniquement.
+**Volet 1** : MMLU-Pro (ingénierie, informatique) et GPQA Diamond servent de garde-fou de raisonnement général ; rien de
+public ne couvre notre domaine.
 
 **Notation** : QCM et faits attendus automatiques ; problèmes ouverts au juge avec grille, calibré par un humain.
 
 **Métriques** : % exact, % de faits couverts, % d'hallucinations (faits interdits, références inventées), % de refus corrects
 sur les questions sans réponse, jetons et durée par réponse.
 
-### 3.2 Écrire du code
+### 4.2 Écrire du code
 
 **Mesure** : produire du C embarqué correct, qui compile sans avertissement, respecte nos règles (MISRA, pas d'allocation
 dynamique, tailles bornées) et passe des tests.
@@ -131,8 +216,8 @@ dynamique, tailles bornées) et passe des tests.
   utilitaires sans dépendance matérielle (parsing APDU/TLV, BER-TLV, CRC, gestion de buffers, machines à états).
 - Le jeu `code` actuel (Python, dont `analyser_apdu`) reste comme exemple public.
 
-**Réutilisable** : HumanEval+ / MBPP+ (EvalPlus), MultiPL-E (variantes C++), LiveCodeBench pour suivre les modèles sur des
-problèmes récents non vus à l'entraînement. Garde-fous seulement : ce n'est ni du C ni de l'embarqué.
+**Volet 1** : HumanEval+ / MBPP+ et MultiPL-E C++ (pas de variante C). Garde-fous seulement : ce n'est ni du C ni de
+l'embarqué. LiveCodeBench pourra s'ajouter si HumanEval+ sature.
 
 **Notation** : exécution. Le conteneur de test actuel (`python:3.12-slim`, sans réseau) est complété par une image
 `eval-c` construite une fois, hors ligne : `gcc`/`clang`, Unity ou CppUTest (selon ce que l'équipe utilise), `cppcheck`
@@ -142,7 +227,7 @@ la taille du code.
 **Métriques** : pass@1 (et pass@3), % qui compile avec `-Wall -Wextra -Werror`, nombre de violations `cppcheck`/MISRA par
 tâche, taille du code et pile (`-fstack-usage`) quand c'est mesurable, jetons et durée.
 
-### 3.3 Corriger des bugs
+### 4.3 Corriger des bugs
 
 **Mesure** : à partir d'un symptôme (test qui échoue, trace, description), trouver et corriger le défaut sans casser le reste.
 
@@ -155,8 +240,8 @@ tâche, taille du code et pile (`-fstack-usage`) quand c'est mesurable, jetons e
   la vérité, les tests de non-régression servent de juge. Plus rares mais plus représentatifs (débordements, alignement,
   endianness, sécurité contre les attaques en faute).
 
-**Réutilisable** : SWE-bench Multilingual (inclut des dépôts C et C++) et SWE-bench Verified, avec leurs images Docker, pour
-évaluer le mode agent (OpenCode) plus tard (phase 4). Lourds à faire tourner : pas dans l'exécution rapide.
+**Volet 1** : Aider polyglot (corriger des exercices après l'échec des tests, C++ compris). Plus tard : SWE-bench
+Multilingual (dépôts C et C++) et SWE-bench Verified, lourds (images Docker x86, des heures).
 
 **Notation** : exécution (le test qui échouait passe, tous les autres aussi). Localisation notée à part : le correctif
 touche-t-il la bonne fonction ?
@@ -164,7 +249,7 @@ touche-t-il la bonne fonction ?
 **Métriques** : % corrigés, % de correctifs qui cassent un autre test, % de bonne localisation, taille du diff
 (un correctif minimal est préférable), durée et jetons.
 
-### 3.4 Expliquer du code
+### 4.4 Expliquer du code
 
 **Mesure** : expliquer correctement une fonction ou un module (rôle, flux de contrôle, effets de bord, cas limites) sans
 inventer.
@@ -180,7 +265,7 @@ octet de statut est renvoyé si le fichier n'existe pas ? ») : réponses exacte
 
 **Métriques** : % de questions vérifiables justes, % de points couverts, nombre d'affirmations fausses par explication.
 
-### 3.5 Documentation à partir du code (doc de code)
+### 4.5 Documentation à partir du code (doc de code)
 
 **Mesure** : produire des commentaires Doxygen et des docs de module justes, complets et au format maison.
 
@@ -191,12 +276,12 @@ compare à l'original. Coût humain nul pour construire le jeu.
 - Structure, automatique : Doxygen sans avertissement, chaque paramètre documenté, `@return`, sens `[in]/[out]` justes.
 - Contenu : le juge compare la doc générée à l'originale (contradiction, omission d'un cas limite, invention).
 - Test « aller-retour » optionnel : à partir de la seule doc générée, un autre modèle répond aux questions vérifiables
-  de § 3.4 ; une bonne doc permet d'y répondre.
+  de § 4.4 ; une bonne doc permet d'y répondre.
 
 **Métriques** : % de docs sans avertissement Doxygen, % de paramètres justes, score juge (contradictions, omissions),
 % de réponses justes à l'aller-retour.
 
-### 3.6 Extraction des exigences de test
+### 4.6 Extraction des exigences de test
 
 **Mesure** : à partir d'une spec (ou d'une section de norme), lister les exigences testables, chacune atomique, avec
 condition et résultat attendu.
@@ -214,7 +299,7 @@ où un juge est fiable, puis calcul automatique.
 **Métriques** : rappel (exigences de référence retrouvées), précision (exigences extraites qui existent vraiment), %
 d'exigences non atomiques ou non testables, doublons.
 
-### 3.7 Couverture des exigences
+### 4.7 Couverture des exigences
 
 **Mesure** : à partir d'une liste d'exigences et d'une liste de tests (noms, descriptions, code), dire quel test couvre
 quelle exigence et lesquelles ne sont pas couvertes.
@@ -227,7 +312,7 @@ retire quelques tests de la liste et on vérifie que le modèle signale les exig
 **Métriques** : précision, rappel et F1 sur les liens ; rappel sur les exigences non couvertes (le plus important : une
 exigence non couverte manquée est l'erreur coûteuse).
 
-### 3.8 Couverture du code par les tests
+### 4.8 Couverture du code par les tests
 
 Deux tâches distinctes, toutes deux notées par l'exécution réelle de gcov, donc sans jugement :
 
@@ -235,18 +320,18 @@ Deux tâches distinctes, toutes deux notées par l'exécution réelle de gcov, d
    rapport `gcovr` réel. Métriques : précision et rappel sur les branches non couvertes.
 2. **Génération de tests** : le modèle écrit des tests pour couvrir ce qui manque. On les compile et exécute dans `eval-c`.
    Métriques : % de tests qui compilent et passent, gain de couverture lignes/branches, et **score de mutation** des
-   nouveaux tests (tuent-ils les mutants du § 3.3 ?), qui distingue un test utile d'un test qui exécute sans rien vérifier.
+   nouveaux tests (tuent-ils les mutants du § 4.3 ?), qui distingue un test utile d'un test qui exécute sans rien vérifier.
 
 **Jeu de données** (`synthetique`) : 10 à 20 modules C compilables sur PC avec leur framework de tests unitaires.
 
-### 3.9 Cohérence doc / code
+### 4.9 Cohérence doc / code
 
 **Mesure** : signaler les écarts entre une doc (spec, commentaire, doc de module) et le code, sans fausses alertes.
 
 **Jeu de données**
 - Base : paires doc/code jugées cohérentes par l'équipe.
 - `synthetique` : on injecte une incohérence soit dans la doc (valeur, ordre des étapes, code d'erreur changé) soit dans le code
-  (mutations du § 3.3 sur des lignes documentées). La position de l'écart est connue.
+  (mutations du § 4.3 sur des lignes documentées). La position de l'écart est connue.
 - Moitié des paires laissées intactes : un modèle qui crie toujours au loup doit être pénalisé.
 - Quelques vrais écarts trouvés en revue (`interne`).
 
@@ -254,23 +339,23 @@ Deux tâches distinctes, toutes deux notées par l'exécution réelle de gcov, d
 
 **Métriques** : rappel sur les écarts injectés, taux de fausses alertes sur les paires intactes, précision de localisation.
 
-### 3.10 RAG : recherche et réponses
+### 4.10 RAG : recherche et réponses
 
 On évalue séparément la **recherche** (sans LLM, rapide, permet de tester beaucoup de configurations) et la **réponse**
 (avec le LLM, coûteux).
 
 **Jeu de données**
 - 100 questions avec les passages pertinents connus (`qrels` : question → documents et pages). Construction : le modèle propose
-  des questions à partir de morceaux tirés au hasard, un humain garde les bonnes et ajuste ; + toutes les questions de § 3.1 qui
+  des questions à partir de morceaux tirés au hasard, un humain garde les bonnes et ajuste ; + toutes les questions de § 4.1 qui
   relèvent des docs. Les questions générées sont trop proches du texte : il faut au moins un tiers de questions écrites par
   des humains, reformulées comme on les pose vraiment.
 - Questions sans réponse dans la base (abstention attendue).
 - Le journal RAG réel (`logs/rag/`) donne la distribution des vraies questions : on s'en sert pour choisir les thèmes, sans
   copier les questions des collègues dans le jeu sans leur accord.
 
-**Réutilisable** : format BEIR et `ir_measures`/`pytrec_eval` pour les métriques de recherche ; RAGAS (fidélité, précision et
-rappel du contexte) branché sur LiteLLM, c'est-à-dire un juge local. Les scores RAGAS sont des jugements de LLM : à calibrer
-comme au § 2.4.
+**Volet 1** : la famille `rag` mesure déjà nos embeddings et notre reranker sur des jeux BEIR publics
+(`services/bench-public/rag_beir.py`). Le volet 2 reprend le même code avec nos qrels au lieu des jeux publics. RAGAS
+(fidélité, précision et rappel du contexte) peut noter les réponses via un juge local, à calibrer comme au § 3.4.
 
 **Ce qu'on fait varier (recherche seule)** : modèle d'embedding, reranker ou non, nombre de candidats (20 aujourd'hui), top-k
 (5), taille et chevauchement des morceaux (1 200 / 200 caractères), recherche hybride BM25 + vecteurs, reranker sur GPU ou CPU
@@ -283,15 +368,15 @@ comme au § 2.4.
 pour la réponse : % juste, % avec bonne source citée, références inventées, fidélité, % d'abstention correcte, nombre
 d'appels à l'outil par question.
 
-## 4. Comportement du système
+## 5. Volet 2 : comportement du système en usage réel
 
 Ces mesures ne dépendent pas des cas d'usage mais de la pile (modèle, quantification, simple/duo, contexte maximal, cache
 KV). Elles se lisent avec la qualité : un modèle meilleur mais qui ne tient que 3 utilisateurs n'est pas le bon choix.
 
-### 4.1 Utilisateurs simultanés
+### 5.1 Utilisateurs simultanés
 
-**Outils** : `vllm bench serve` (déjà dans l'image vLLM, rien à installer) ou GuideLLM, lancés contre LiteLLM pour mesurer la
-pile entière, et directement contre vLLM pour isoler le modèle.
+**Outils** : le volet 1 (famille `charge`) lance déjà `vllm bench serve` avec deux tailles fixes. Ici on le complète avec
+des tailles tirées du trafic réel, lancé contre LiteLLM pour mesurer la pile entière et contre vLLM pour isoler le modèle.
 
 **Scénarios**
 - Balayage de débit d'arrivée (requêtes/s) jusqu'à saturation, et concurrence fixe 1, 4, 8, 16, 32.
@@ -302,32 +387,32 @@ pile entière, et directement contre vLLM pour isoler le modèle.
 
 **Métriques** : TTFT p50/p95, latence inter-jetons p50/p95, débit total, et surtout le **goodput** : nombre de requêtes par
 seconde qui respectent un objectif de service (par exemple TTFT < 3 s et > 15 jetons/s par utilisateur). Le résultat lisible
-est « ce profil tient N utilisateurs actifs avec cet objectif ». *L'objectif est à fixer (§ 6).*
+est « ce profil tient N utilisateurs actifs avec cet objectif ». *L'objectif est à fixer (§ 7).*
 
-### 4.2 Longs contextes
+### 5.2 Longs contextes
 
 **Mesure** : la qualité tient-elle quand le contexte grandit, et combien coûte le pré-remplissage ?
 
-**Outils** : RULER (NVIDIA, synthétique, longueur réglable : aiguille dans une botte de foin, suivi de variables, agrégation)
-à 8 k, 32 k, 64 k, 128 k et jusqu'au maximum du profil (131 072 ou 262 144). Puis une version maison : questions vérifiables
-du § 3.4 posées avec **un module entier de notre code** dans le contexte, à tailles croissantes, la réponse étant à
+**Outils** : RULER et LongBench v2 au volet 1 (jusqu'à 128 k ; à pousser jusqu'au maximum du profil, 262 144, si utile).
+Ici une version maison : questions vérifiables
+du § 4.4 posées avec **un module entier de notre code** dans le contexte, à tailles croissantes, la réponse étant à
 différentes profondeurs.
 
 **Métriques** : précision par longueur et par profondeur, longueur à laquelle la précision passe sous 80 % de celle à 8 k,
 TTFT en fonction de la longueur (coût du pré-remplissage), mémoire KV consommée.
 
-### 4.3 Longues réflexions
+### 5.3 Longues réflexions
 
 **Mesure** : ce que le raisonnement apporte, ce qu'il coûte, et quand il déraille.
 
-**Jeu** : les problèmes d'ingénierie (§ 3.1) et les bugs (§ 3.3), avec raisonnement activé, désactivé, et à plusieurs budgets
+**Jeu** : les problèmes d'ingénierie (§ 4.1) et les bugs (§ 4.3), avec raisonnement activé, désactivé, et à plusieurs budgets
 quand le modèle le permet.
 
 **Métriques** : gain de précision par rapport au mode sans raisonnement, jetons de raisonnement (médiane, p95, max), % de
 réponses tronquées (`finish_reason = length`), % de boucles (répétition détectée), durée de bout en bout. Pour un usage
 interactif, le résultat lisible est « précision obtenue en moins de 60 s ».
 
-### 4.4 Pression sur le cache KV
+### 5.4 Pression sur le cache KV
 
 **Mesure** : ce qui se passe quand plusieurs longues sessions saturent la mémoire KV (préemption, recalcul, files d'attente).
 
@@ -338,19 +423,20 @@ duo (TP2 donne plus de KV par séquence : à vérifier sur nos profils).
 `vllm:num_requests_waiting`, `vllm:num_preemptions_total`, taux de succès du cache de préfixe. Résultat lisible : nombre de
 sessions longues simultanées avant la première préemption, et dégradation de TTFT au-delà.
 
-## 5. Extension des scripts
+## 6. Volet 2 : extension des scripts
 
 Sans écrire le harnais ici, la forme proposée :
 
 - **`scripts/evaluer.py`** reste l'orchestrateur. Ajouts : `--niveau rapide|complet`, `--tirages N`, lecture de
-  `WS_DIR/evals-internes/`, métadonnées du § 2.5, séparation génération / notation (les réponses sont stockées, la notation
+  `WS_DIR/evals-internes/`, métadonnées du § 3.5, séparation génération / notation (les réponses sont stockées, la notation
   peut être relancée), un jeu par usage : `questions`, `code_c`, `bugs`, `explication`, `doc`, `exigences`, `tracabilite`,
   `couverture`, `coherence`, `rag_reponse`. Les jeux actuels `normes`, `outils`, `code` sont conservés.
 - **`scripts/juger.py`** : charge les réponses d'une ou plusieurs exécutions, appelle le juge (le profil juge doit être actif),
   écrit les notes à côté. Gère les comparaisons par paires et l'export de l'échantillon de calibration humaine.
-- **`scripts/eval-rag.py`** : recherche seule, sans LLM, sur une ou plusieurs versions d'index ; rappel@k, MRR, nDCG.
-- **`scripts/bench-charge.sh`** : enveloppe de `vllm bench serve` exécutée dans le conteneur vLLM, scénarios du § 4, résultats
-  dans `WS_DIR/evals/charge/` avec le même `id_execution`.
+- **`scripts/eval-rag.py`** : recherche seule, sans LLM, sur nos qrels et une ou plusieurs versions d'index ; reprend les
+  métriques de `services/bench-public/rag_beir.py` (rappel@k, MRR, nDCG).
+- **Charge réaliste** : nouveaux scénarios dans `SCENARIOS` de `bench-public.py` (tailles tirées des lignes LiteLLM,
+  sessions longues simultanées pour la pression KV, § 5).
 - **`scripts/fabriquer-cas.py`** : génère les cas `synthetique` (mutants, commentaires retirés, incohérences injectées) depuis
   un dépôt de code interne monté en lecture seule.
 - **Image `eval-c`** : gcc/clang, framework de tests unitaires de l'équipe, cppcheck + MISRA, gcovr, Mull. Construite une fois
@@ -358,14 +444,14 @@ Sans écrire le harnais ici, la forme proposée :
 - **`scripts/rapport-modeles.py`** : agrège toutes les exécutions (moyenne, intervalle de confiance, nombre d'exécutions),
   une colonne par usage, et une vue « qualité × capacité » (score par usage face au nombre d'utilisateurs tenus).
 
-Benchmarks publics : `lm-evaluation-harness` pour MMLU-Pro et GPQA, EvalPlus, RULER, plus tard SWE-bench. Téléchargés une fois
-dans `WS_DIR/benchmarks/`, lancés par `evaluer.py --niveau complet` et versés dans le même format de résultats.
+Le format de résultats du volet 1 (installation, empreinte, toutes les exécutions gardées et moyennées) sert de modèle pour
+`evaluer.py`.
 
 Revue humaine : Open WebUI a un mode **Arena** (deux modèles anonymes côte à côte, vote, classement Elo). En duo on peut
 servir deux profils à la fois ; sinon on compare les réponses stockées dans une page de vote simple. C'est le juge final
 entre deux finalistes, et la source de calibration du juge.
 
-## 6. Décisions à prendre
+## 7. Décisions à prendre
 
 1. **Qui écrit les questions et réponses de référence**, et combien de temps on y met. Estimation : 2 ingénieurs × 1 jour pour
    100 questions techniques et RAG (avec réponses et sources), une demi-journée pour 30 grilles d'explication. Sans ça, seuls
@@ -378,12 +464,20 @@ entre deux finalistes, et la source de calibration du juge.
 4. **Échantillonnage** : passer aux paramètres recommandés par modèle avec 3 tirages (proposé), ou garder la température 0.
 5. **Objectif de service** pour la charge : combien d'utilisateurs simultanés viser et quelles latences sont acceptables
    (par exemple TTFT < 3 s pour Open WebUI, < 10 s pour une requête OpenCode à 50 k de contexte).
-6. **Créneau** pour l'évaluation complète : une nuit par profil occupe le Spark ; à caler avec l'usage réel.
+6. **Créneau** pour l'évaluation complète : une nuit par profil occupe le Spark ; à caler avec l'usage réel. Le volet 1
+   rapide prend 1 à 3 h : à lancer hors des heures d'usage, il charge le GPU comme plusieurs utilisateurs.
+7. **GPQA** : accepter ses conditions sur Hugging Face (compte de l'équipe) pour l'inclure, sinon le retirer des préréglages.
 
-## 7. Déploiement par étapes
+## 8. Déploiement par étapes
 
-**Phase 0 : hygiène des résultats** (1 à 2 jours, prérequis de tout le reste)
-- Métadonnées du § 2.5 (dont la configuration RAG), plus aucune exécution écrasée dans le rapport, dossier
+**Maintenant : volet 1**
+- `./scripts/bench-public.py preparer` puis `lancer` sur chaque profil candidat, rapide d'abord. Premier classement, et
+  vérification qu'aucun profil n'est cassé (outils, raisonnement, contexte).
+- Comparer simple et duo, raisonnement activé ou non, reranker local ou déporté (PR #15) : ce que le volet 1 mesure le
+  mieux.
+
+**Phase 0 : hygiène des résultats du volet 2** (1 à 2 jours, prérequis du reste)
+- Métadonnées du § 3.5 (dont la configuration RAG), plus aucune exécution écrasée dans le rapport, dossier
   `WS_DIR/evals-internes/`, `--tirages`, jetons de raisonnement et `finish_reason` enregistrés.
 - Métriques KV et préemptions ajoutées au rapport.
 
@@ -391,7 +485,7 @@ entre deux finalistes, et la source de calibration du juge.
 - 50 premières questions techniques réelles (débloque l'issue #12) et les qrels de 50 questions RAG.
 - `eval-rag.py` : recherche seule, comparaison de 3 ou 4 configurations d'index. Pas besoin de changer de modèle, donc
   rapide à itérer et utile même avant de choisir le LLM.
-- `bench-charge.sh` avec profils de requêtes réalistes et objectif de service : répond à « combien d'utilisateurs ».
+- Scénarios de charge réalistes et objectif de service : répond à « combien d'utilisateurs » sur notre trafic.
 
 **Phase 2 : code C, objectif et automatique** (1 à 2 semaines)
 - Image `eval-c`, écriture de code (fonctions retirées de nos modules), bugs injectés par mutation, couverture gcov
@@ -403,7 +497,7 @@ entre deux finalistes, et la source de calibration du juge.
   doc/code avec incohérences injectées.
 
 **Phase 4 : contexte long, raisonnement, agent** (au fil de l'eau)
-- RULER et contexte long sur notre code, budgets de raisonnement, pression KV en duo.
+- Contexte long sur notre code, budgets de raisonnement, pression KV en duo.
 - Évaluation en mode agent (OpenCode non interactif sur des tâches de bug et de code), puis SWE-bench Multilingual.
 - Arena Open WebUI entre les deux finalistes.
 
