@@ -1,0 +1,34 @@
+# Spark 1 quand un serveur annexe porte tout le reste : ici ne tournent que vLLM et les deux exporteurs de métriques.
+# ⚠ NON TESTÉ : voir SERVEUR-ANNEXE.md (ordre de déploiement, pare-feu, migration des données).
+#
+#   Dans le .env du Spark 1, à la fin de COMPOSE_FILE :
+#     duo :      docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-duo.yml:docker-compose.spark-annexe.yml
+#     1 Spark :  docker-compose.yml:docker-compose.spark.yml:docker-compose.spark-annexe.yml  (+ VLLM_ECOUTE=0.0.0.0)
+#   docker compose up -d        démarre vllm, gpu-exporter et node-exporter, rien d'autre
+#
+# Les autres services restent définis (même projet, mêmes fichiers) mais rangés dans un profil jamais activé ici :
+# toute la mémoire du Spark va au modèle, d'où VLLM_GPU_UTIL_FIXE (≈ 0.85) au lieu de 0.68 (SERVEUR-ANNEXE.md, section 7).
+# Le Spark 2 ne change pas : docker-compose.spark-worker.yml.
+
+x-sur-le-serveur: &sur-le-serveur
+  profiles: ["sur-le-serveur-annexe"]
+
+services:
+  tei-embed: *sur-le-serveur
+  tei-rerank: *sur-le-serveur
+  qdrant: *sur-le-serveur
+  mcp-docs: *sur-le-serveur
+  litellm: *sur-le-serveur
+  postgres: *sur-le-serveur
+  open-webui: *sur-le-serveur
+  prometheus: *sur-le-serveur
+  caddy: *sur-le-serveur
+
+  # Lus par le Prometheus du serveur annexe, par le réseau de l'équipe (ports 9835 et 9100).
+  # Réseau de l'hôte, comme sur le Spark 2 : ufw les ferme à tous sauf au serveur (SERVEUR-ANNEXE.md, section 4).
+  # (Un port publié par Docker contournerait ufw.)
+  gpu-exporter:
+    network_mode: host
+
+  node-exporter:
+    network_mode: host

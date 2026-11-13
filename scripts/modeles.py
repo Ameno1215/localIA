@@ -10,6 +10,9 @@
   ./scripts/modeles.py confirmer                 après un redémarrage manuel de vLLM (duo) : attend vLLM, le note actif, évalue
   ./scripts/modeles.py historique [--a DATE]     profils activés au fil du temps (ou celui actif à une date)
 
+Serveur annexe (SERVEUR-ANNEXE.md) : avec ANNEXE_SSH dans le .env du Spark 1, l'historique et les cibles Prometheus
+sont copiés sur le serveur par SSH, et l'évaluation fixe y est lancée (LiteLLM et le RAG y tournent).
+
 Un profil = les réglages vLLM d'un modèle (image, parsers, options). Les recettes viennent de
 recipes.vllm.ai (internet requis pour chercher/ajouter ; le reste marche hors ligne).
 Bibliothèque standard uniquement.
@@ -17,6 +20,7 @@ Bibliothèque standard uniquement.
 
 import argparse
 import concurrent.futures as cf
+import io
 import json
 import math
 import os
@@ -25,6 +29,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
 from pathlib import Path
@@ -386,7 +391,7 @@ def journaliser_profil(evenement: str, nom: str, p: dict, courant: dict) -> None
     ligne = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "evenement": evenement, "profil": nom,
         "modele_hf": p.get("MODELE_HF", ""), "mode": "duo" if "spark-duo" in compose else "simple",
-        "hote": socket.gethostname(), "commit": commit,
+        "hote": socket.gethostname(), "commit": commit, "pile": "serveur-annexe" if annexe(courant) else "spark",
         **{k.lower(): p.get(k, "") for k in CLES_ENV}, "vllm_lora_args": courant.get("VLLM_LORA_ARGS", ""),
     }
     f = journal_profils()
@@ -394,19 +399,70 @@ def journaliser_profil(evenement: str, nom: str, p: dict, courant: dict) -> None
     with f.open("a") as sortie:
         sortie.write(json.dumps(ligne, ensure_ascii=False) + "\n")
     if evenement != "echec":
-        ecrire_cible_prometheus(nom, ligne["mode"])
+        ecrire_cible_prometheus(nom, ligne["mode"], courant)
+    if annexe(courant):
+        copier_vers_annexe(courant)
 
 
-def ecrire_cible_prometheus(nom: str, mode: str) -> None:
+def annexe(courant: dict) -> bool:
+    """Serveur annexe : LiteLLM, RAG, Prometheus… tournent ailleurs, le Spark 1 ne porte que vLLM (SERVEUR-ANNEXE.md)."""
+    return bool(courant.get("ANNEXE_SSH", "").strip())
+
+
+def ecrire_cible_prometheus(nom: str, mode: str, courant: dict) -> None:
     """Cible vLLM de Prometheus avec le profil en label : les métriques se comparent par modèle.
     Prometheus relit ce fichier tout seul (file_sd), sans redémarrage."""
     f = WS / "prometheus" / "cibles" / "vllm.json"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps([{"targets": ["vllm:8000"], "labels": {"profil": nom, "mode": mode}}], indent=2) + "\n")
-    # Duo : exporteurs GPU et machine du Spark 2, joints par le câble (docker-compose.spark-worker.yml)
-    worker = lire_env(PROJET / ".env").get("DUO_IP_WORKER", "") if mode == "duo" else ""
+    if annexe(courant):
+        # Prometheus est sur le serveur : il joint les Spark par le réseau de l'équipe (le câble ne va pas jusqu'à lui)
+        spark1, spark2 = courant.get("IP_SPARK1", "").strip(), courant.get("IP_SPARK2", "").strip()
+        if not spark1:
+            erreur("IP_SPARK1 manquant dans .env : l'IP du Spark 1 sur le réseau de l'équipe (SERVEUR-ANNEXE.md)")
+        if mode == "duo" and not spark2:
+            erreur("IP_SPARK2 manquant dans .env : l'IP du Spark 2 sur le réseau de l'équipe (pas celle du câble)")
+        vllm, cibles1 = f"{spark1}:8000", [{"targets": [f"{spark1}:9835", f"{spark1}:9100"], "labels": {"hote": "spark1"}}]
+        worker = spark2 if mode == "duo" else ""
+    else:
+        # Duo sans serveur : exporteurs du Spark 2 joints par le câble (docker-compose.spark-worker.yml)
+        vllm, cibles1 = "vllm:8000", []
+        worker = courant.get("DUO_IP_WORKER", "") if mode == "duo" else ""
+    labels = {"profil": nom, "mode": mode, "pile": "serveur-annexe" if annexe(courant) else "spark"}
+    f.write_text(json.dumps([{"targets": [vllm], "labels": labels}], indent=2) + "\n")
+    (f.parent / "spark1.json").write_text(json.dumps(cibles1, indent=2) + "\n")
     cibles = [{"targets": [f"{worker}:9835", f"{worker}:9100"], "labels": {"hote": "spark2"}}] if worker else []
     (f.parent / "spark2.json").write_text(json.dumps(cibles, indent=2) + "\n")
+
+
+def ssh_annexe(courant: dict, commande: str, **kw) -> subprocess.CompletedProcess:
+    """Commande dans le dossier du projet sur le serveur annexe (ANNEXE_SSH, ANNEXE_DOSSIER du .env)."""
+    dossier = courant.get("ANNEXE_DOSSIER", "").strip()
+    if not dossier:
+        erreur("ANNEXE_DOSSIER manquant dans .env : le dossier du projet sur le serveur annexe (SERVEUR-ANNEXE.md)")
+    return subprocess.run(["ssh", *kw.pop("options", []), courant["ANNEXE_SSH"].strip(), f"cd {shlex.quote(dossier)} && {commande}"], **kw)
+
+
+def copier_vers_annexe(courant: dict) -> None:
+    """Historique des profils et cibles Prometheus, copiés dans le WS_DIR du serveur (lu dans son .env).
+    Le Spark 1 reste le seul à les écrire : la copie écrase celle du serveur."""
+    tampon = io.BytesIO()
+    with tarfile.open(fileobj=tampon, mode="w") as tar:
+        for chemin in [WS / "logs" / "profils.jsonl", *sorted((WS / "prometheus" / "cibles").glob("*.json"))]:
+            if chemin.exists():
+                tar.add(chemin, arcname=str(chemin.relative_to(WS)))
+    # WS_DIR du .env du serveur ; vide = dossier du projet, relatif = relatif au projet (comme resoudre_ws)
+    distant = ('ws=$(sed -n "s/^WS_DIR=//p" .env | tail -n 1); ws=${ws:-.}; case "$ws" in /*) ;; *) ws="$PWD/$ws" ;; esac; '
+               'mkdir -p "$ws/logs" "$ws/prometheus/cibles" && tar -xf - -C "$ws"')
+    try:
+        r = ssh_annexe(courant, distant, input=tampon.getvalue(), capture_output=True, timeout=60, options=["-o", "BatchMode=yes"])
+        ok, detail = r.returncode == 0, r.stderr.decode(errors="replace").strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        ok, detail = False, str(e)
+    if ok:
+        print(f"Historique et cibles Prometheus copiés sur le serveur annexe ({courant['ANNEXE_SSH'].strip()}).")
+    else:
+        print(f"⚠ Copie vers le serveur annexe impossible ({detail or 'ssh a échoué'}). Les métriques du serveur ne connaissent "
+              "pas encore ce profil : corriger SSH (SERVEUR-ANNEXE.md, section 5), puis  ./scripts/modeles.py confirmer --sans-eval")
 
 
 def lire_historique() -> list[dict]:
@@ -439,6 +495,7 @@ def cmd_utiliser(a) -> None:
         erreur(f"{a.env} n'est pas un .env de Spark (COMPOSE_FILE absent) : ce script règle le Spark, pas le PC de test. --force pour passer outre.")
     if courant.get("VLLM_LORA_ARGS"):
         print("⚠ VLLM_LORA_ARGS est rempli : une LoRA entraînée sur un autre modèle ne fonctionne pas avec celui-ci. Vide-le ou réentraîne.")
+    p = appliquer_fixes(p, courant)
     ecrire_env(env, {k: p.get(k, "") for k in CLES_ENV} | {"VLLM_PROFIL": a.nom})
     # Réglages Docker propres au modèle (mémoire partagée, limites, sécurité) : fichier généré, retiré au changement de modèle
     extra_compose = PROJET / ".compose.vllm.yml"
@@ -465,6 +522,15 @@ def cmd_utiliser(a) -> None:
     attendre_vllm(a, a.nom, p, courant, compose)
 
 
+def appliquer_fixes(p: dict, courant: dict) -> dict:
+    """VLLM_GPU_UTIL_FIXE du .env remplace la valeur du profil (serveur annexe : le Spark ne porte plus que vLLM)."""
+    fixe = courant.get("VLLM_GPU_UTIL_FIXE", "").strip()
+    if fixe and fixe != p.get("VLLM_GPU_UTIL"):
+        print(f"VLLM_GPU_UTIL={fixe} (VLLM_GPU_UTIL_FIXE du .env) au lieu de {p.get('VLLM_GPU_UTIL')} (profil)")
+        return p | {"VLLM_GPU_UTIL": fixe}
+    return p
+
+
 def attendre_vllm(a, nom: str, p: dict, courant: dict, compose: list[str]) -> None:
     """Attend que vLLM réponde, note le profil comme actif (historique, Prometheus), puis lance l'évaluation fixe."""
     print("Chargement du modèle (plusieurs minutes)…", end="", flush=True)
@@ -477,6 +543,12 @@ def attendre_vllm(a, nom: str, p: dict, courant: dict, compose: list[str]) -> No
             if a.sans_eval:
                 return print("Évaluation sautée. Plus tard :  ./scripts/evaluer.py")
             print("Évaluation fixe du profil (10 à 15 min, Ctrl+C pour l'interrompre sans risque) :  ./scripts/evaluer.py")
+            if annexe(courant):
+                # LiteLLM, le RAG et Docker pour les tests de code sont sur le serveur : l'évaluation y tourne
+                print(f"(sur le serveur annexe {courant['ANNEXE_SSH'].strip()})")
+                if ssh_annexe(courant, f"./scripts/evaluer.py --profil {shlex.quote(nom)}", options=["-t"]).returncode != 0:
+                    print(f"⚠ Évaluation interrompue ou impossible. Sur le serveur :  ./scripts/evaluer.py --profil {nom}")
+                return
             subprocess.run([sys.executable, str(PROJET / "scripts" / "evaluer.py"), "--env", a.env], cwd=PROJET)
             return
         if "exited" in etat or "dead" in etat:
@@ -496,7 +568,7 @@ def cmd_confirmer(a) -> None:
     if not nom:
         erreur(f"VLLM_PROFIL absent de {a.env} : lance d'abord  ./scripts/modeles.py utiliser <profil> --sans-redemarrer")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
-    attendre_vllm(a, nom, lire_profil(nom), courant, compose)
+    attendre_vllm(a, nom, appliquer_fixes(lire_profil(nom), courant), courant, compose)
 
 
 def main() -> None:
