@@ -232,6 +232,19 @@ def cmd_lm_eval(a) -> None:
         args["tokenizer_backend"] = None
     # Modèles de raisonnement : pas de séquence d'arrêt (elle couperait la réflexion) et un budget de jetons large
     gen = {"max_gen_toks": a.max_tokens, "until": [], **extra(a)}
+    # Une tâche dont le jeu manque (GPQA sans accès Hugging Face) ferait échouer toute la famille : on la retire
+    sautees = []
+    from lm_eval.tasks import TaskManager, get_task_dict
+    gestionnaire = TaskManager()
+    for t in [t for t in taches if not t.startswith(("niah_", "ruler"))]:
+        try:
+            get_task_dict([t], gestionnaire)
+        except Exception as e:
+            print(f"⚠ tâche {t} sautée : {str(e)[:300]}", flush=True)
+            sautees.append(t)
+    taches = [t for t in taches if t not in sautees]
+    if not taches:
+        sys.exit("aucune tâche lm-eval utilisable (jeux absents : ./scripts/bench-public.py preparer)")
     t0 = time.time()
     res = lm_eval.simple_evaluate(model="local-chat-completions", model_args=args, tasks=taches,
                                   limit=a.limite or None, apply_chat_template=True, fewshot_as_multiturn=True,
@@ -246,7 +259,7 @@ def cmd_lm_eval(a) -> None:
                 f.write(json.dumps({"tache": tache, "doc_id": l.get("doc_id"), "cible": l.get("target"),
                                     "reponse": l.get("filtered_resps"), "brut": l.get("resps")},
                                    ensure_ascii=False, default=str) + "\n")
-    ecrire(sortie / "score.json", {"scores": scores, "details": {"resultats": res.get("results"), "n": res.get("n-samples"),
+    ecrire(sortie / "score.json", {"scores": scores, "details": {"taches_sautees": sautees, "resultats": res.get("results"), "n": res.get("n-samples"),
                                                                  "versions": res.get("versions"), "duree_s": round(time.time() - t0)}})
     print(json.dumps(scores, indent=2))
 

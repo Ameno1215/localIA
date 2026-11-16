@@ -131,7 +131,9 @@ class Banc:
 
     def docker_banc(self, args: list[str], reseau: bool = True, modeles: bool = False) -> int:
         cmd = ["docker", "run", "--rm", "--network", "host" if reseau else "none",
-               "-e", "OPENAI_API_KEY", "-e", "HF_TOKEN", "-v", f"{self.bench}:/bench"]
+               "-e", "OPENAI_API_KEY", "-e", "HF_TOKEN", "-v", f"{self.bench}:/bench",
+               # banc.py du dépôt plutôt que celui de l'image : une correction ne demande pas de reconstruire
+               "-v", f"{PROJET / 'services' / 'bench-public' / 'banc.py'}:/app/banc.py:ro"]
         if not getattr(self.a, "internet", False):
             cmd += ["-e", "HF_HUB_OFFLINE=1", "-e", "HF_DATASETS_OFFLINE=1"]
         if modeles:
