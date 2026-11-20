@@ -150,8 +150,8 @@ def cmd_preparer(a) -> None:
             etape(f"lm-eval {t}", lambda t=t: get_task_dict([t], TaskManager()))
 
     def nltk_punkt():
-        import nltk
-        nltk.download("punkt_tab", download_dir=os.environ.get("NLTK_DATA", str(RACINE / "nltk")), quiet=True)
+        import nltk  # punkt_tab est dans l'image (Dockerfile) : on vérifie seulement
+        nltk.data.find("tokenizers/punkt_tab")
 
     def evalplus_jeux():
         from evalplus.data import get_human_eval_plus, get_mbpp_plus
