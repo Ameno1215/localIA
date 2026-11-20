@@ -176,7 +176,7 @@ td.m{white-space:nowrap}
       <text x="78" y="666" font-size="13.5" font-weight="600">vLLM 0.30 · OpenAI-compatible API, served as qwen-local</text>
       <text x="78" y="685" font-size="11.5" class="mut">Nemotron 3.5 Super VL 120B-A12B (MoE) · NVFP4 · ~75 GB weights</text>
       <text x="78" y="702" font-size="11.5" class="mut">262k-token context · 8 concurrent requests · FP8 KV cache · tool calling</text>
-      <text x="78" y="716" font-size="10.5" class="mono mut">:8000 · firewall: app server only</text>
+      <text x="78" y="716" font-size="10.5" class="mono mut">:8000 vLLM · :9835, :9100 metrics · firewall: app server only</text>
       <rect x="644" y="644" width="292" height="76" rx="6" class="chip-nv"/>
       <text x="658" y="666" font-size="13" font-weight="600">Dedicated to the model</text>
       <text x="658" y="685" font-size="11.5" class="mut">no other service on the node</text>
@@ -195,6 +195,7 @@ td.m{white-space:nowrap}
           <tr><td>Workstations (OpenCode)</td><td>App server · Caddy</td><td class="m">443</td><td class="m">HTTPS /mcp</td><td>Team bearer token</td></tr>
           <tr><td>Browsers</td><td>App server · Caddy</td><td class="m">8443</td><td class="m">HTTPS</td><td>Open WebUI account</td></tr>
           <tr><td>App server · LiteLLM, MCP</td><td>DGX Spark · vLLM</td><td class="m">8000</td><td class="m">HTTP</td><td>Bearer API key, plus a source-IP firewall rule</td></tr>
+          <tr><td>App server · Prometheus</td><td>DGX Spark · GPU and node exporters</td><td class="m">9835, 9100</td><td class="m">HTTP</td><td>None: only the source-IP firewall rule protects them</td></tr>
           <tr><td>Admins</td><td>Both machines</td><td class="m">22</td><td class="m">SSH</td><td>SSH keys</td></tr>
         </tbody>
       </table>
@@ -225,7 +226,7 @@ td.m{white-space:nowrap}
     <div class="card">
       <h2>Security</h2>
       <ul>
-        <li>Two ports exposed on the server (443, 8443). The Spark only accepts port 8000 from the server's IP, plus SSH.</li>
+        <li>Two ports exposed on the server (443, 8443). From the server's IP, the Spark only accepts port 8000 (vLLM) and ports 9835 and 9100 (GPU and node metrics for Prometheus), plus SSH.</li>
         <li>One API key per user, with quotas and usage tracking. Revoking a key cuts that user's access immediately.</li>
         <li>The MCP server only offers read-only document search. No file or shell tools are reachable from the network.</li>
         <li>Secrets (master key, DB password, tokens) live in a <code>.env</code> file with mode 600 and are never committed.</li>
@@ -237,7 +238,7 @@ td.m{white-space:nowrap}
         <li>Runs fully offline (<code>HF_HUB_OFFLINE=1</code>). Internet is only needed to pull images and model weights, or they can come from a transfer disk.</li>
         <li>All persistent data lives in one data directory per machine, so a backup is one folder.</li>
         <li>The model is swapped through a profile in <code>config/modeles-spark/</code>. Clients keep the same model name.</li>
-        <li>Health checks are a control panel on port 7000 (localhost/SSH) and a check script.</li>
+        <li>Monitoring is Prometheus on the server (port 9090, localhost), which scrapes vLLM and the Spark exporters, plus a control panel on port 7000 (localhost/SSH) and a check script.</li>
       </ul>
     </div>
   </section>

@@ -57,6 +57,7 @@ Le tout reste dans le réseau interne : aucun accès Internet n'est nécessaire 
 | Postes (OpenCode) | Serveur · Caddy | 443 | HTTPS `/mcp` | Jeton Bearer d'équipe |
 | Navigateurs | Serveur · Caddy | 8443 | HTTPS | Compte Open WebUI |
 | Serveur · LiteLLM, MCP | DGX Spark · vLLM | 8000 | HTTP | Clé API Bearer, plus une règle de pare-feu sur l'IP source |
+| Serveur · Prometheus | DGX Spark · exporteurs GPU et machine | 9835, 9100 | HTTP | Aucune : seule la règle de pare-feu sur l'IP source les protège |
 | Admins | Les deux machines | 22 | SSH | Clés SSH |
 
 Tous les autres ports sont liés à localhost ou au réseau Docker interne. Le trafic serveur → Spark reste dans le réseau local, en HTTP simple ; il peut passer en TLS si la politique de sécurité l'exige.
@@ -76,7 +77,7 @@ Tous les autres ports sont liés à localhost ou au réseau Docker interne. Le t
 
 ## Sécurité
 
-- Deux ports exposés sur le serveur (443, 8443). Le Spark n'accepte que le port 8000 depuis l'IP du serveur, plus SSH.
+- Deux ports exposés sur le serveur (443, 8443). Depuis l'IP du serveur, le Spark n'accepte que le port 8000 (vLLM) et les ports 9835 et 9100 (métriques GPU et machine lues par Prometheus), plus SSH. En duo, le Spark 2 n'ouvre au serveur que 9835 et 9100. Les règles ufw sont dans `SERVEUR-ANNEXE.md`, section 4.
 - Une clé API par utilisateur, avec quotas et suivi de consommation. Révoquer une clé coupe immédiatement l'accès de la personne.
 - Le serveur MCP n'offre que la recherche documentaire en lecture seule. Aucun outil fichier ou shell n'est joignable depuis le réseau.
 - Les secrets (clé maître, mot de passe de la base, jetons) sont dans un fichier `.env` en mode 600, jamais commité.
@@ -86,7 +87,7 @@ Tous les autres ports sont liés à localhost ou au réseau Docker interne. Le t
 - Fonctionne entièrement hors ligne (`HF_HUB_OFFLINE=1`). Internet ne sert qu'à récupérer les images et les poids des modèles, qui peuvent aussi arriver par un disque de transfert.
 - Toutes les données persistantes sont dans un seul dossier de données par machine : une sauvegarde, c'est un dossier.
 - On change de modèle par un profil dans `config/modeles-spark/`. Les clients gardent le même nom de modèle.
-- Supervision : le panneau de contrôle sur le port 7000 (localhost ou tunnel SSH) et un script de vérification.
+- Supervision : Prometheus sur le serveur (port 9090, localhost) collecte les métriques de vLLM et des exporteurs des Spark. Le panneau de contrôle (port 7000, localhost ou tunnel SSH) tourne aussi sur le serveur, avec un script de vérification.
 
 ## Montée en charge de l'inférence
 
