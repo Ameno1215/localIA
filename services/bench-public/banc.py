@@ -6,6 +6,7 @@
   banc.py code-gen   --jeu humaneval|mbpp|cpp --sortie DIR  génère les solutions (appels au modèle, en parallèle)
   banc.py code-note  --jeu ... --sortie DIR                 exécute les tests (conteneur SANS réseau)
   banc.py longbench  --longueurs short,medium --sortie DIR  LongBench v2, questions à choix, invite officielle
+  banc.py beir       --jeux scifact,nfcorpus,fiqa            jeux BEIR depuis Hugging Face (accès Internet)
 
 Chaque commande écrit DIR/score.json : {"scores": {nom: valeur}, "details": {...}}. Les réponses brutes restent à côté.
 Racine des données : /bench (WS_DIR/benchmarks sur le Spark), ou BANC_RACINE.
@@ -406,6 +407,81 @@ def cmd_longbench(a) -> None:
     print(json.dumps(scores, indent=2))
 
 
+# ----------------------------------------------------------------------------- BEIR depuis Hugging Face
+
+def beir_hf(jeu: str, cible: Path) -> None:
+    """Écrit cible/{corpus.jsonl, queries.jsonl, qrels/test.tsv}, le format lu par rag_beir.py. Le serveur d'origine
+    (UKP, Darmstadt) est souvent injoignable : on prend les copies BeIR/<jeu> de Hugging Face, puis celles de MTEB."""
+    import gzip
+    import shutil
+    from huggingface_hub import hf_hub_download, list_repo_files
+
+    def brut(depot: str, nom: str, dest: Path) -> bool:
+        fichiers = list_repo_files(depot, repo_type="dataset")
+        for f in (nom, nom + ".gz"):
+            if f in fichiers:
+                src = hf_hub_download(depot, f, repo_type="dataset")
+                with (gzip.open if f.endswith(".gz") else open)(src, "rb") as fi, dest.open("wb") as fo:
+                    shutil.copyfileobj(fi, fo)
+                return True
+        return False
+
+    def ecrire_jsonl(lignes, dest: Path, cles) -> int:
+        n = 0
+        with dest.open("w") as fo:
+            for r in lignes:
+                fo.write(json.dumps({k: str(r.get(k) or "") for k in cles}, ensure_ascii=False) + "\n")
+                n += 1
+        return n
+
+    tmp = cible.with_name(cible.name + ".partiel")
+    shutil.rmtree(tmp, ignore_errors=True)
+    (tmp / "qrels").mkdir(parents=True)
+    try:
+        ok = (brut(f"BeIR/{jeu}", "corpus.jsonl", tmp / "corpus.jsonl")
+              and brut(f"BeIR/{jeu}", "queries.jsonl", tmp / "queries.jsonl")
+              and brut(f"BeIR/{jeu}-qrels", "test.tsv", tmp / "qrels" / "test.tsv"))
+        source = f"BeIR/{jeu}"
+    except Exception as e:
+        print(f"  BeIR/{jeu} indisponible ({str(e)[:200]}), essai mteb/{jeu}", flush=True)
+        ok = False
+    if not ok:
+        from datasets import load_dataset
+        source = f"mteb/{jeu}"
+        c = load_dataset(source, "corpus")
+        ecrire_jsonl(c[next(iter(c))], tmp / "corpus.jsonl", ("_id", "title", "text"))
+        q = load_dataset(source, "queries")
+        ecrire_jsonl(q[next(iter(q))], tmp / "queries.jsonl", ("_id", "text"))
+        qr = load_dataset(source, "default", split="test")
+        with (tmp / "qrels" / "test.tsv").open("w") as fo:
+            fo.write("query-id\tcorpus-id\tscore\n")
+            for r in qr:
+                fo.write(f"{r['query-id']}\t{r['corpus-id']}\t{int(r['score'])}\n")
+    n = sum(1 for _ in (tmp / "corpus.jsonl").open())
+    nq = sum(1 for _ in (tmp / "queries.jsonl").open())
+    if not n or not nq:
+        raise RuntimeError(f"{source} : corpus ou requêtes vides")
+    shutil.rmtree(cible, ignore_errors=True)
+    tmp.rename(cible)
+    print(f"  {jeu} : {n} documents, {nq} requêtes ({source})", flush=True)
+
+
+def cmd_beir(a) -> None:
+    echecs = []
+    for jeu in [j for j in a.jeux.split(",") if j]:
+        cible = DONNEES / "beir" / jeu
+        if (cible / "corpus.jsonl").exists():
+            continue
+        print(f"• BEIR {jeu}…", flush=True)
+        try:
+            beir_hf(jeu, cible)
+        except Exception as e:
+            echecs.append(jeu)
+            print(f"  ✗ {jeu} : {str(e)[:400]}", flush=True)
+    if echecs:
+        sys.exit(1)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -435,6 +511,9 @@ def main() -> None:
     p.add_argument("--contexte", type=int, default=131072)
     p.add_argument("--tokenizer")
     p.set_defaults(f=cmd_longbench)
+    p = sp.add_parser("beir")
+    p.add_argument("--jeux", required=True)
+    p.set_defaults(f=cmd_beir)
     a = ap.parse_args()
     a.f(a)
 

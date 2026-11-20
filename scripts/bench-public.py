@@ -340,14 +340,17 @@ def cmd_preparer(a) -> None:
     a.internet = True
     code = b.docker_banc(["preparer", "--taches-lm-eval", ",".join(taches)])
     b.rendre_droits()
-    print("3. Jeux BEIR (recherche RAG)")
-    for jeu in sorted({j for p in PRESETS.values() for j in p["rag"]}):
+    print("3. Jeux BEIR (recherche RAG) : Hugging Face, sinon le serveur d'origine (UKP, souvent injoignable)")
+    jeux = sorted({j for p in PRESETS.values() for j in p["rag"]})
+    b.docker_banc(["beir", "--jeux", ",".join(jeux)])
+    b.rendre_droits()
+    for jeu in jeux:
         cible = b.bench / "donnees" / "beir"
         if (cible / jeu / "corpus.jsonl").exists():
             continue
-        print(f"  {jeu}…", flush=True)
+        print(f"  {jeu} depuis UKP…", flush=True)
         try:
-            with urllib.request.urlopen(BEIR.format(jeu), timeout=600) as r:
+            with urllib.request.urlopen(BEIR.format(jeu), timeout=120) as r:
                 zipfile.ZipFile(io.BytesIO(r.read())).extractall(cible)
         except Exception as e:
             code = 1
