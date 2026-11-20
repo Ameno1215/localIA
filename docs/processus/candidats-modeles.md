@@ -11,6 +11,7 @@ Légende du nombre de Spark : le minimum pour que le modèle tienne avec de la p
 | Modèle | Total / actifs | Quantif. | Poids | Spark min. | Recette Spark | Licence | Débit publié | Benchmarks publiés (source, conditions) | Statut |
 |---|---|---|---|---|---|---|---|---|---|
 | Nemotron 3 Ultra | 550 Md / ? | ? | ? | 4 ? | ? | ? | ? | | à vérifier : taille quantifiée, recette multi-Spark |
+| GLM-5.3-Flash | ? | NVFP4 | ? | 4 (TP=4) | Communautaire 4 Spark (discussion Hugging Face LibertAIDAI) | ? | ? | | Réserve KV publiée ~6,3 M jetons en TP=4 (~95 sessions à 64 k), voir [plan de tests de charge](plan-tests-charge.md#le-cache-kv--le-premier-mur) |
 | _à compléter_ | | | | | | | | | |
 
 ## Rôle « moyen » : 1 à 3 Spark (familles B, C, D)
@@ -21,7 +22,7 @@ Légende du nombre de Spark : le minimum pour que le modèle tienne avec de la p
 | Qwen3.8 Flash Next FP4-Local | 125 Md / 6 Md | FP4 local | ~103 Go | 1 (tout juste) | NVIDIA, 15/10/2026 | ? | 37,8 tok/s | GPQA Diamond 91,5 % (BF16 : 92,2 %), ToolEvalBench 88,7 % (NVIDIA) | Profil `qwen3.8-flash-next-fp4-local`, non testé |
 | Nemotron 3.5 Super VL | 120 Md / 12 Md | NVFP4 | 75 Go | 1, mieux à 2 | NVIDIA, 15/10/2026 | ? | 51 tok/s (1 Spark, NVIDIA) ; ~28 tok/s mesuré en duo sans spéculatif | | Profil actuel par défaut, validé en duo le 2026-11-09 |
 | Ornith 1.5 122B | 122 Md / ? | NVFP4 | ~70 Go | 1 | Aucune | MIT | ? | SWE-bench Verified 84,5, TerminalBench 2.1 81,2 (éditeur, **non vérifiés**) | Expérimental |
-| DeepSeek V4-Flash | ? | ? | ? | ? | ? | ? | ? | | Challenger cité, à documenter |
+| DeepSeek V4-Flash | ? | ? | ? | 2 (TP=2) | Communautaire 2 Spark (elsung) | ? | ? | | Challenger ; réserve KV publiée ~1,1 M jetons en KV FP8 (~17 sessions à 64 k), modèle `code-agent` des exemples du [plan de tests de charge](plan-tests-charge.md) |
 | _à compléter_ | | | | | | | | | |
 
 ## Rôle « petit et rapide » : 1 Spark, ou à côté d'un autre modèle

@@ -52,7 +52,7 @@ flowchart TD
 |---|---|---|---|
 | 1. Inventaire | Qu'est-ce qui tient sur nos Spark, et que disent les chiffres publiés ? | Lecture, quelques heures | [Tableau des candidats](candidats-modeles.md), liste courte |
 | 2. Benchmarks publics | Retrouve-t-on les chiffres publiés sur notre installation ? | 1 à 3 h par modèle (rapide), une nuit (complet) | Couples modèle × configuration validés, écarts expliqués |
-| 3. Charge | Combien d'utilisateurs chaque configuration tient-elle, et avec quels réglages ? | Une demi-journée à une nuit par configuration | Courbes de capacité, réglages retenus |
+| 3. Charge | Combien d'utilisateurs chaque configuration tient-elle, avec quels réglages, et peut-on l'ouvrir à l'équipe ? | 4 à 6 jours pour toutes les phases, dont 1 jour par modèle | Coude par modèle, réglages retenus, go / no-go |
 | 4. Benchmark maison | Lequel est le meilleur sur notre métier ? | Construction du jeu : plusieurs jours-ingénieur ; exécution : une nuit par finaliste | Score par usage, finalistes départagés |
 
 Les étapes 2 et 3 ne demandent rien à l'équipe en dehors du temps machine. L'étape 4 demande d'écrire les cas : **on commence à construire son jeu dès maintenant, en parallèle des étapes 2 et 3**, sinon il sera le goulot d'étranglement.
@@ -197,45 +197,67 @@ Les seuils (3 et 8 points) sont un point de départ, à ajuster quand on connaî
 
 ## Étape 3 : tester les configurations sous charge (plus tard)
 
-But : savoir **combien d'utilisateurs simultanés** chaque configuration complète tient, et **comment la régler**. C'est ici que les familles A, B, C et D se comparent vraiment : un modèle plus capable qui ne tient que 3 utilisateurs n'est pas le bon choix pour l'équipe.
+But : savoir **combien d'utilisateurs simultanés** chaque configuration complète tient, **comment la régler**, et si elle est prête à être ouverte à toute l'équipe. C'est ici que les familles A, B, C et D se comparent vraiment : un modèle plus capable qui ne tient que 3 utilisateurs n'est pas le bon choix.
 
-Cette étape sera faite plus tard, quand les 4 Spark seront reliés. Ce qui existe déjà : la famille `charge` du volet 1 (`vllm bench serve` à tailles fixes) et Prometheus pour les métriques vLLM et GPU (issue #8). Ce qu'il faudra ajouter est décrit au § 5 de [PLAN-EVALUATION.md](../../PLAN-EVALUATION.md).
+Cette étape sera faite plus tard, quand les 4 Spark seront reliés. Le plan détaillé, avec les commandes, est le **[plan de tests de charge et de limites](plan-tests-charge.md)** (Tim, 2026-11-09). Ce qui suit en est le résumé.
 
-### Ce qu'on fait varier
+### Ce qui limite en premier
 
-| Réglage | Effet |
+Avec une trentaine d'utilisateurs d'OpenCode, la première limite n'est presque jamais le débit en jetons par seconde. Dans l'ordre :
+
+1. **La réserve de cache KV** : sessions simultanées ≈ réserve KV (jetons) ÷ contexte moyen par session. Par exemple, DeepSeek-V4-Flash sur 2 Spark tient ~17 sessions à 64 k avant de préempter.
+2. **La température** sur les longues exécutions (bridage, voire coupure d'un Spark).
+3. **L'équité** : l'essaim d'agents d'un seul développeur qui affame les autres.
+
+On surveille donc des indicateurs par couche (usage KV, préemptions, requêtes en attente, TTFT, ITL, `MemAvailable`, fréquence, pertes RoCE, surcoût LiteLLM…), pas l'utilisation GPU, qui est proche de 100 % sur un serveur en bonne santé. Le tableau complet est dans le [plan](plan-tests-charge.md#les-limites-couche-par-couche).
+
+### Objectifs de service proposés
+
+| Mesure (p95) | Cible |
 |---|---|
-| `VLLM_MAX_SEQS` (requêtes traitées en même temps) | Plus d'utilisateurs servis, moins de tok/s chacun |
-| `VLLM_GPU_UTIL`, contexte maximal, cache KV fp8 | Place pour le cache KV, donc nombre de longues sessions simultanées |
-| `--max-num-batched-tokens`, chunked prefill | Équilibre entre premier jeton rapide et débit |
-| Décodage spéculatif (MTP, DFlash…) | Gain en tok/s à faible charge, parfois perte à forte charge |
-| Cache de préfixe | Gain quand beaucoup de requêtes partagent le même début (prompt système, même dépôt) |
-| Répartition (TP, PP, répliques) et routage | Pour B, C et D : quelle part du trafic va au petit modèle |
+| Premier jeton, tour suivant (préfixe en cache) | < 3 s |
+| Premier jeton, prompt froid de 64 k jetons | < 45 s |
+| Vitesse de génération par requête | ≥ 20 tok/s sur le modèle d'agent, ≥ 50 tok/s sur le modèle rapide |
+| Latence entre jetons p99 | < 150 ms |
+| Taux d'erreur | < 0,5 % |
+| Attente en file | ≈ 0 la plupart de la journée |
 
-### Les scénarios
+Hypothèse : 10 à 15 sessions d'agent actives un jour normal, plus de 30 aux pics. Ces cibles sont à ajuster après une semaine d'usage réel ; elles répondent à la décision 5 de PLAN-EVALUATION.
 
-- Concurrence fixe 1, 4, 8, 16, 32 utilisateurs, puis débit d'arrivée croissant jusqu'à saturation.
-- **Trafic réaliste** : tailles de requêtes tirées des lignes LiteLLM (jamais le texte). Le cas critique est le mélange de sessions OpenCode longues (30 à 60 k jetons de contexte) et de questions courtes dans Open WebUI.
-- **Pression sur le cache KV** : sessions longues ajoutées jusqu'à la première préemption.
-- Pour les configurations à plusieurs modèles : le routage automatique ([issue #18](https://github.com/Ameno1215/localIA/issues/18)) et l'indicateur de charge par modèle ([issue #17](https://github.com/Ameno1215/localIA/issues/17)) sont testés ici, sous charge.
-
-On mesure à travers LiteLLM (toute la pile, comme les utilisateurs) et directement sur vLLM (le modèle seul).
-
-### Le résultat lisible
-
-On fixe d'abord un **objectif de service** (décision 5 de PLAN-EVALUATION, encore ouverte), par exemple : premier jeton en moins de 3 s pour Open WebUI, en moins de 10 s pour une requête OpenCode à 50 k jetons, et au moins 15 tok/s par utilisateur. Le résultat de l'étape est alors une phrase par configuration : « **la configuration X tient N utilisateurs actifs en respectant l'objectif** », avec les réglages qui y arrivent.
+### Les phases
 
 ```mermaid
 flowchart LR
-    cfg["Configuration<br/>(famille + profils)"] --> sc["Scénario de charge"]
-    sc --> mes["Mesures : TTFT p50/p95,<br/>tok/s par utilisateur, goodput,<br/>cache KV, préemptions"]
-    mes --> slo{"Objectif tenu<br/>à N utilisateurs ?"}
-    slo -->|"non, ou marge"| reg["Changer un réglage"]
-    reg --> sc
-    slo -->|"oui, N maximal trouvé"| res["N utilisateurs<br/>+ réglages retenus"]
+    p0["0 · Machines<br/>et réseau"] --> p1["1 · Capacité<br/>de chaque modèle"]
+    p1 --> p2["2 · Charge réaliste<br/>via LiteLLM"]
+    p2 --> p3["3 · RAG<br/>sous charge"]
+    p3 --> p4["4 · Endurance<br/>et température"]
+    p4 --> p5["5 · Pannes<br/>et reprise"]
+    p5 --> p6["6 · Limites<br/>et abus"]
+    p6 --> go{"Go / no-go"}
 ```
 
-**Livrable** : pour chaque configuration, sa courbe de capacité et ses réglages, dans une note de [docs/notes/](../notes/).
+| Phase | Durée | Ce qu'on vérifie |
+|---|---|---|
+| 0. Machines et réseau | ½ journée | Chaque Spark tient sa fréquence sous charge ; liens RoCE et NCCL stables, sans pertes |
+| 1. Capacité de chaque modèle | 1 jour par modèle | `vllm bench serve` direct sur vLLM, concurrence 1 → 64, prompts de 4 k à 64 k et préfixes répétés : le **coude** où le goodput cesse de monter |
+| 2. Charge réaliste | 1 à 2 jours | Développeurs virtuels (Locust ou k6) à travers LiteLLM, sessions d'agent de 10 à 80 k jetons, paliers 10 → 45 ; puis pilote réel à 5 puis 15 personnes, dont on rejoue le trafic |
+| 3. RAG sous charge | ½ journée | Embeddings, rerank et recherche restent rapides pendant la phase 2 et une ingestion massive |
+| 4. Endurance | 1 nuit + 1 jour chaud | 6 à 8 h à ~70 % du coude : pas de coupure, fréquence ≥ 1 400 MHz, latence stable |
+| 5. Pannes et reprise | ½ journée | Un vLLM tué, un Spark redémarré, un lien débranché : le repli LiteLLM marche, retour en moins de 10 min |
+| 6. Limites et abus | ½ journée | Contexte trop long, clé gourmande, requête sans `max_tokens` : erreurs propres, les autres utilisateurs ne sont pas touchés |
+
+Les phases se font dans l'ordre : chacune élimine une cause d'erreur pour la suivante (un problème de latence en phase 2 ne peut plus venir d'un câble ou d'un Spark qui chauffe). Quand une limite est atteinte, on corrige d'abord la cause que l'indicateur désigne (réglages vLLM, limites par clé LiteLLM, réseau, refroidissement) : la [table des réglages](plan-tests-charge.md#que-régler-quand-une-limite-est-atteinte) donne les premiers à essayer. Ajouter des Spark ou changer de modèle vient en dernier.
+
+Pour les configurations à plusieurs modèles, le routage automatique ([issue #18](https://github.com/Ameno1215/localIA/issues/18)) et l'indicateur de charge par modèle ([issue #17](https://github.com/Ameno1215/localIA/issues/17)) sont testés pendant les phases 2 et 5.
+
+### Le résultat
+
+- Pour chaque configuration : son **coude** par modèle (sessions simultanées à 32 k et 64 k qui respectent l'objectif), ses réglages retenus, et le résultat de la grille [go / no-go](plan-tests-charge.md#go--no-go-avant-douvrir-aux-30-développeurs).
+- Le résultat lisible reste une phrase : « **la configuration X tient N sessions d'agent actives en respectant l'objectif** ».
+- Une configuration qui échoue au go / no-go après réglages sort de la liste, comme aux étapes 1 et 2.
+
+**Livrable** : une note de [docs/notes/](../notes/) par configuration (courbes de capacité, réglages, go / no-go).
 
 ## Étape 4 : benchmark maison sur nos cas d'usage terrain
 
@@ -314,12 +336,13 @@ Le journal des profils (issue #7) et le rapport par profil (issue #11) gardent l
 
 - Quatre étapes en entonnoir : inventaire et chiffres publiés, vérification sur notre installation, charge, benchmark métier. Les deux premières filtrent, les deux dernières notent.
 - L'étape 4 décide, et c'est la plus longue à préparer : on commence à écrire les cas de bugs et de questions-réponses tout de suite.
-- À trancher : objectif de service (étape 3), qui écrit les cas et quel matériel interne on peut utiliser (étape 4), poids de la grille finale, câblage des 4 Spark.
+- À trancher : valider les objectifs de service proposés dans le [plan de tests de charge](plan-tests-charge.md) (étape 3), qui écrit les cas et quel matériel interne on peut utiliser (étape 4), poids de la grille finale, câblage des 4 Spark.
 
 ## Liens
 
 - [PLAN-EVALUATION.md](../../PLAN-EVALUATION.md) et `scripts/bench-public.py` : [PR #16](https://github.com/Ameno1215/localIA/pull/16) (volet 1 implémenté, volet 2 planifié)
 - [Tableau des candidats](candidats-modeles.md) (étape 1)
+- [Plan de tests de charge et de limites](plan-tests-charge.md) (étape 3, Tim)
 - Observabilité : [issue #6](https://github.com/Ameno1215/localIA/issues/6) et ses sous-issues #7 (journal des profils), #8 (Prometheus, GPU), #9 (journal RAG), #10, #11 (rapport par profil), #12 (jeu d'évaluation)
 - Charge et routage : [issue #17](https://github.com/Ameno1215/localIA/issues/17) (indicateur de charge par modèle), [issue #18](https://github.com/Ameno1215/localIA/issues/18) (modèle « auto » selon la difficulté)
 - Serveur annexe : [PR #15](https://github.com/Ameno1215/localIA/pull/15)
