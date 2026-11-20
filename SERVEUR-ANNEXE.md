@@ -53,7 +53,7 @@ Le Spark 2 ne change pas (`docker-compose.spark-worker.yml`), sauf `VLLM_GPU_UTI
 
 ## 3. Ordre de déploiement
 
-Les étapes 4 à 6 se font **sans couper le service**. La coupure (étape 7) dure le temps de copier les données et de
+Les sections 4 à 6 se font **sans couper le service**. La coupure (section 7) dure le temps de copier les données et de
 recharger le modèle : compter 15 à 30 minutes.
 
 1. Pare-feu des deux Spark : ouvrir au serveur (section 4).
@@ -154,23 +154,26 @@ de test, qui a les mêmes) :
 ./scripts/01-telecharger-modeles.sh --serveur
 docker compose config --services     # postgres litellm tei-embed tei-rerank qdrant mcp-docs open-webui caddy node-exporter prometheus
 docker compose pull && docker compose build mcp-docs
+docker pull python:3.12-slim         # conteneur des tests de code de l'évaluation fixe
 ```
 
 Les poids PyTorch de bge-m3 du Spark ne suffisent pas à TEI sur CPU : ne pas les recopier.
 
 ## 7. Bascule
 
-### 7.1 Sauvegarder la base LiteLLM (Spark 1, pile encore en marche)
+### 7.1 Couper l'accès, puis sauvegarder la base LiteLLM (début de la coupure)
 
-Postgres passe d'ARM à x86 : on transporte une sauvegarde logique plutôt que les fichiers de la base.
+Postgres passe d'ARM à x86 : on transporte une sauvegarde logique plutôt que les fichiers de la base. On arrête d'abord
+tout ce qui écrit dedans, sinon les requêtes arrivées entre la sauvegarde et l'arrêt seraient perdues.
 
 ```bash
 cd /home/admin_spark4c7c/data/ws/ia-locale-duo
+docker compose stop caddy open-webui litellm
 docker compose exec -T postgres pg_dump -U litellm -Fc litellm > ~/litellm.dump
 ls -lh ~/litellm.dump
 ```
 
-### 7.2 Arrêter et copier (début de la coupure)
+### 7.2 Arrêter et copier
 
 ```bash
 # Spark 1
@@ -355,4 +358,6 @@ sudo ufw allow from 172.16.0.0/12 to any port 8000 proto tcp
 | `tei-embed` redémarre en boucle | bge-m3 sans version ONNX : `./scripts/01-telecharger-modeles.sh --serveur` |
 | Recherches dans les normes lentes | Section 8 |
 | `Free memory on device … less than desired GPU memory utilization` | `VLLM_GPU_UTIL_FIXE` trop haut pour l'un des Spark : redescendre d'un palier (section 7.5), vider le cache disque (SPARK-DUO.md, section 9) |
+| Qdrant ne démarre pas, ou collections vides après la copie | Le format de stockage n'est pas garanti entre ARM et x86. Normes : `docker compose exec mcp-docs python ingest.py --reset`. Documents déposés dans Open WebUI : réglages admin → Documents → « Reindex Knowledge Base Vectors » |
+| Panneau web (port 7000) vide sur le Spark 1 | Normal : il ne voit plus que vLLM et les exporteurs. Le lancer sur le serveur (`./scripts/panneau.sh`, tunnel SSH vers son port 7000) |
 | `pg_restore` : erreurs « already exists » | LiteLLM a démarré avant la restauration et a créé ses tables : `docker compose down`, vider `WS_DIR/postgres` du serveur, refaire 7.3 |

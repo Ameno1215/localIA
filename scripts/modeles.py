@@ -568,7 +568,13 @@ def cmd_confirmer(a) -> None:
     if not nom:
         erreur(f"VLLM_PROFIL absent de {a.env} : lance d'abord  ./scripts/modeles.py utiliser <profil> --sans-redemarrer")
     compose = ["docker", "compose", "--env-file", str(env)] if a.env != ".env" else ["docker", "compose"]
-    attendre_vllm(a, nom, appliquer_fixes(lire_profil(nom), courant), courant, compose)
+    # Le journal note ce qui tourne vraiment : la valeur du .env (écrite par « utiliser »), pas celle du profil
+    p = lire_profil(nom) | {k: courant[k] for k in CLES_ENV if courant.get(k)}
+    fixe = courant.get("VLLM_GPU_UTIL_FIXE", "").strip()
+    if fixe and fixe != p.get("VLLM_GPU_UTIL"):
+        print(f"⚠ VLLM_GPU_UTIL={p.get('VLLM_GPU_UTIL')} dans {a.env}, mais VLLM_GPU_UTIL_FIXE={fixe} : il n'est appliqué que par "
+              f"« utiliser ». Pour le prendre en compte :  ./scripts/modeles.py utiliser {nom} --sans-redemarrer --sans-telecharger")
+    attendre_vllm(a, nom, p, courant, compose)
 
 
 def main() -> None:
