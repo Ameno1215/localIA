@@ -29,6 +29,9 @@ RERANK_URL = os.environ.get("RERANK_URL", "http://localhost:8082")
 COLLECTION = os.environ.get("COLLECTION", "docs_internes")
 # "tei" : Text Embeddings Inference (PC x86, CPU). "vllm" : vLLM en mode pooling (Spark ARM64, où TEI n'existe pas).
 RAG_BACKEND = os.environ.get("RAG_BACKEND", "tei")
+# Passages relus par le reranker à chaque recherche. Sur CPU (serveur annexe), sa durée croît avec ce nombre :
+# la baisser si t_rerank_ms du journal RAG est trop élevé (SERVEUR-ANNEXE.md, section 8)
+RAG_CANDIDATS = int(os.environ.get("RAG_CANDIDATS", "20"))
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace")).resolve()
 # 1 : outils fichiers + commandes sur ./workspace (aucun client ne les utilise aujourd'hui).
 # 0 : seulement rechercher_docs — obligatoire dès que le serveur est joignable par le réseau (Spark).
@@ -253,7 +256,7 @@ def rechercher_docs(question: str, nb_resultats: int = 5, ctx: Context | None = 
     t0 = time.perf_counter()
     vecteur = embed([question])[0]
     t1 = time.perf_counter()
-    candidats = qdrant.query_points(COLLECTION, query=vecteur, limit=20).points
+    candidats = qdrant.query_points(COLLECTION, query=vecteur, limit=RAG_CANDIDATS).points
     t2 = time.perf_counter()
     if not candidats:
         journal.recherche(id_requete, question, _client(ctx), nb_resultats=nb_resultats, candidats=[], retenus=[],
