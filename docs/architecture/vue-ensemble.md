@@ -97,7 +97,7 @@ sequenceDiagram
 
 ## Piste : le serveur annexe (non testé)
 
-Idée : sortir tout ce qui n'est pas le modèle vers un PC ou serveur x86 sans GPU, pour laisser la mémoire des Spark à vLLM. Embeddings et reranker y repassent sur CPU (TEI). Voir `docker-compose.serveur.yml` et l'annexe de [SPARK-DUO.md](../../SPARK-DUO.md).
+Idée : sortir tout ce qui n'est pas le modèle vers un PC ou serveur x86 sans GPU, pour laisser la mémoire des Spark à vLLM. Embeddings et reranker y repassent sur CPU (TEI). Voir `docker-compose.serveur.yml`, l'annexe de [SPARK-DUO.md](../../SPARK-DUO.md) et la page détaillée [cible-serveur-annexe.md](cible-serveur-annexe.md).
 
 ```mermaid
 flowchart LR
