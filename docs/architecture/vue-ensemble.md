@@ -97,7 +97,7 @@ sequenceDiagram
 
 ## Piste : le serveur annexe (non testé)
 
-Idée : sortir tout ce qui n'est pas le modèle vers un PC ou serveur x86 sans GPU, pour laisser la mémoire des Spark à vLLM. Embeddings et reranker y repassent sur CPU (TEI). Mode d'emploi : [SERVEUR-ANNEXE.md](../../SERVEUR-ANNEXE.md) (`docker-compose.serveur.yml` sur le serveur, `docker-compose.spark-annexe.yml` sur le Spark 1). Prometheus, le rapport et l'évaluation passent aussi sur le serveur ; les Spark gardent vLLM et leurs exporteurs (ports 8000, 9835, 9100 ouverts au seul serveur).
+Idée : sortir tout ce qui n'est pas le modèle vers un PC ou serveur x86 sans GPU, pour laisser la mémoire des Spark à vLLM. Embeddings et reranker y repassent sur CPU (TEI). Mode d'emploi : [SERVEUR-ANNEXE.md](../../SERVEUR-ANNEXE.md) (`docker-compose.serveur.yml` sur le serveur, `docker-compose.spark-annexe.yml` sur le Spark 1) ; page détaillée : [cible-serveur-annexe.md](cible-serveur-annexe.md). Prometheus, le rapport et l'évaluation passent aussi sur le serveur ; les Spark gardent vLLM et leurs exporteurs (ports 8000, 9835, 9100 ouverts au seul serveur).
 
 ```mermaid
 flowchart LR
