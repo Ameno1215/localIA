@@ -321,7 +321,12 @@ def noter_evalplus(jeu: str, reponses: dict, sortie: Path, parallele: int) -> tu
             f.write(json.dumps({"task_id": tid, "solution": code}) + "\n")
     resultat = sortie / "echantillons_eval_results.json"
     resultat.unlink(missing_ok=True)
-    evaluate(dataset=jeu, samples=str(echantillons), parallel=parallele, i_just_wanna_run=True)
+    try:
+        evaluate(dataset=jeu, samples=str(echantillons), parallel=parallele, i_just_wanna_run=True)
+    except Exception as e:  # BrokenProcessPool : un processus de test tué (mémoire) ; on recommence plus doucement
+        print(f"⚠ EvalPlus a échoué avec {parallele} processus ({type(e).__name__}) : nouvel essai avec 1 seul", flush=True)
+        resultat.unlink(missing_ok=True)
+        evaluate(dataset=jeu, samples=str(echantillons), parallel=1, i_just_wanna_run=True)
     ev = json.loads(resultat.read_text())["eval"]
     res = {tid: {"base": ev[tid][0]["base_status"] == "pass",
                  "plus": ev[tid][0]["base_status"] == ev[tid][0]["plus_status"] == "pass"} for tid in reponses}
@@ -421,7 +426,8 @@ def main() -> None:
     p = sp.add_parser("code-note")
     p.add_argument("--jeu", choices=["humaneval", "mbpp", "cpp"], required=True)
     p.add_argument("--sortie", required=True)
-    p.add_argument("--parallele", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    # 4 processus au plus : chacun peut prendre plusieurs Go sur les entrées « plus » de MBPP+
+    p.add_argument("--parallele", type=int, default=min(4, max(1, (os.cpu_count() or 2) // 2)))
     p.set_defaults(f=cmd_code_note)
     p = sp.add_parser("longbench")
     options_modele(p)

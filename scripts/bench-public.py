@@ -139,9 +139,18 @@ class Banc:
         if modeles:
             cmd += ["-v", f"{self.ws / 'models'}:/models:ro"]
         if not reseau:  # le code produit par le modèle s'exécute ici : ni réseau ni ressources illimitées
-            cmd += ["--memory", "4g", "--pids-limit", "512"]
+            cmd += ["--memory", "12g", "--pids-limit", "1024"]
         env = os.environ | {"OPENAI_API_KEY": self.cle}
         return lancer_cmd([*cmd, IMAGE, *args], env=env)[0]
+
+    def rendre_droits(self) -> None:
+        """Les conteneurs tournent en root : leurs fichiers dans WS_DIR/benchmarks appartiennent à root, et le script
+        (lancé par l'utilisateur) ne peut plus y écrire (« Permission denied » sur donnees/beir). On les lui rend."""
+        if os.geteuid() == 0 or not self.bench.exists():
+            return
+        image = IMAGE if subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True).returncode == 0 else "python:3.12-slim"
+        subprocess.run(["docker", "run", "--rm", "-v", f"{self.bench}:/b", "--entrypoint", "chown", image,
+                        "-R", f"{os.getuid()}:{os.getgid()}", "/b"], capture_output=True)
 
     def options_modele(self) -> list[str]:
         o = ["--url", self.url, "--max-tokens", str(self.a.max_tokens), "--concurrence", str(self.concurrence)]
@@ -330,6 +339,7 @@ def cmd_preparer(a) -> None:
     taches = sorted({t for p in PRESETS.values() for f in ("connaissances", "consignes") for t in p[f]["taches"].split(",")})
     a.internet = True
     code = b.docker_banc(["preparer", "--taches-lm-eval", ",".join(taches)])
+    b.rendre_droits()
     print("3. Jeux BEIR (recherche RAG)")
     for jeu in sorted({j for p in PRESETS.values() for j in p["rag"]}):
         cible = b.bench / "donnees" / "beir"
@@ -359,6 +369,7 @@ def cmd_preparer(a) -> None:
             code |= p.returncode
         else:
             code = 1
+    b.rendre_droits()
     print("\n" + ("✓ Prêt. Lancer :  ./scripts/bench-public.py lancer" if code == 0 else
                   "⚠ Terminé avec des échecs (voir plus haut) : les familles concernées seront sautées."))
 
@@ -374,6 +385,7 @@ def cmd_lancer(a) -> None:
     if subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True).returncode != 0:
         erreur(f"image {IMAGE} absente : ./scripts/bench-public.py preparer")
     servi = b.verifier_vllm()
+    b.rendre_droits()  # reste d'une exécution précédente faite en root
     inst = b.installation(servi)
     config = hashlib.sha256(json.dumps(inst, sort_keys=True).encode()).hexdigest()[:8]
     date = time.strftime("%Y-%m-%d_%H%M")
@@ -405,6 +417,7 @@ def cmd_lancer(a) -> None:
             raise
         except Exception as e:
             scores, statut = {}, f"erreur : {str(e)[:200]}"
+        b.rendre_droits()
         resume["familles"][f] = {"statut": statut, "duree_s": round(time.time() - t0)}
         resume["scores"] |= scores
         sauver()  # après chaque famille : une exécution interrompue garde ce qui est fait
