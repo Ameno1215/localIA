@@ -14,6 +14,7 @@ Les guides d'installation et d'utilisation restent à la racine du dépôt ([GUI
 | [notes/](notes/) | Notes au fil de l'eau, datées : essais, mesures, constats | `2026-11-16-essai-qwen-duo.md` |
 | [reflexions/](reflexions/) | Idées et pistes qu'on creuse, pas encore tranchées | `routage-auto-par-difficulte.md` |
 | [decisions/](decisions/) | Choix tranchés, avec le pourquoi (une page par décision, numérotée) | [0001 : la doc vit dans le dépôt](decisions/0001-doc-dans-le-depot.md) |
+| [processus/](processus/) | Comment on fait ce qui revient : étapes, ordre, livrables | [Benchmark et classement des modèles](processus/benchmark-modeles.md) |
 
 Une réflexion qui aboutit devient une décision ; une décision qui change la stack met à jour un schéma de `architecture/`.
 
