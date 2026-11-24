@@ -34,6 +34,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -52,6 +53,11 @@ FAMILLES = ["connaissances", "consignes", "code", "contexte", "rag", "agent", "c
 SCENARIOS = {"chat": {"entree": 1000, "sortie": 500, "ttft_ms": 3000},
              "agent": {"entree": 32000, "sortie": 800, "ttft_ms": 15000}}
 TPOT_MAX_MS = 66
+# Aider : au plus 8 exercices à la fois, 1 h par requête (raisonnement long), et un plafond global. Sans cela le banc
+# d'Aider coupe chaque requête à 600 s puis réessaie avec une attente doublée jusqu'à 24 h : 24 exercices en 67 h.
+AIDER_THREADS_MAX = 8
+AIDER_TIMEOUT_S = 3600
+AIDER_HEURES_MAX = 12
 
 # limite = nombre de questions PAR sous-tâche (0 = tout). Changer un préréglage rend ses anciens résultats incomparables :
 # le rapport ne moyenne que des exécutions au préréglage identique (empreinte « jeux »).
@@ -228,8 +234,14 @@ class Banc:
     def f_contexte(self, p, d):
         dossier_modele = f"/models/{self.env.get('VLLM_MODEL', '')}"
         longueurs = [n for n in p["longueurs"] if n + self.a.max_tokens <= self.contexte] or [p["longueurs"][0]]
-        scores = self.lm_eval(d / "ruler", p["ruler"], p["limite"], modeles=True,
-                              extra=["--tokenizer", dossier_modele, "--longueurs", ",".join(map(str, longueurs))])
+        # RULER fabrique ses jeux au lancement à partir de sources en ligne (essais de Paul Graham sur Hugging Face,
+        # SQuAD, HotpotQA) : il lui faut Internet, contrairement aux autres familles
+        hors_ligne, self.a.internet = getattr(self.a, "internet", False), True
+        try:
+            scores = self.lm_eval(d / "ruler", p["ruler"], p["limite"], modeles=True,
+                                  extra=["--tokenizer", dossier_modele, "--longueurs", ",".join(map(str, longueurs))])
+        finally:
+            self.a.internet = hors_ligne
         if p.get("longbench"):
             lb = p["longbench"]
             self.docker_banc(["longbench", *self.options_modele(), "--longueurs", lb["longueurs"], "--limite", str(lb["limite"]),
@@ -257,19 +269,42 @@ class Banc:
             return {}
         sorties = self.bench / "aider"
         nom = d.name
-        cmd = ["docker", "run", "--rm", "--network", "host", "--memory", "12g", "-e", "OPENAI_API_KEY",
-               "-e", f"OPENAI_API_BASE={self.url}", "-e", "AIDER_DOCKER=1", "-e", "AIDER_BENCHMARK_DIR=/benchmarks",
-               "-v", f"{sorties}:/benchmarks", "-w", "/aider", IMAGE_AIDER,
+        # Réglages du modèle pour Aider (JSON = YAML valide) : délai par requête et plafond de sortie comme les autres familles
+        params = {"timeout": AIDER_TIMEOUT_S, "max_tokens": self.a.max_tokens}
+        if self.a.sans_raisonnement:
+            params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+        (sorties / "reglages-modele.yml").write_text(json.dumps([{"name": "openai/qwen-local", "edit_format": "whole",
+                                                                   "extra_params": params}], indent=2) + "\n")
+        conteneur = f"bench-aider-{nom}"
+        base = ["docker", "run", "--rm", "--network", "host", "--memory", "12g", "-e", "OPENAI_API_KEY",
+                "-e", f"OPENAI_API_BASE={self.url}", "-e", "AIDER_DOCKER=1", "-e", "AIDER_BENCHMARK_DIR=/benchmarks",
+                "-v", f"{sorties}:/benchmarks", "-w", "/aider"]
+        cmd = [*base, "--name", conteneur, IMAGE_AIDER,
                "./benchmark/benchmark.py", nom, "--model", "openai/qwen-local", "--edit-format", "whole",
-               "--threads", str(self.concurrence), "--exercises-dir", "polyglot-benchmark", "--new"]
+               "--read-model-settings", "/benchmarks/reglages-modele.yml",
+               "--threads", str(min(self.concurrence, AIDER_THREADS_MAX)), "--exercises-dir", "polyglot-benchmark", "--new"]
         if p.get("langages"):
             cmd += ["--languages", p["langages"]]
-        _, texte = lancer_cmd(cmd, env=os.environ | {"OPENAI_API_KEY": self.cle or "aucune"}, capture=True)
-        lu = dict(re.findall(r"^\s*(pass_rate_\d|percent_cases_well_formed|seconds_per_case|test_cases):\s*([\d.]+)", texte, re.M))
+        env = os.environ | {"OPENAI_API_KEY": self.cle or "aucune"}
+        # Plafond global : à l'échéance on arrête le conteneur et on note les exercices terminés
+        arret = threading.Timer(AIDER_HEURES_MAX * 3600, lambda: (
+            print(f"  ⚠ Aider arrêté après {AIDER_HEURES_MAX} h : score sur les exercices terminés", flush=True),
+            subprocess.run(["docker", "stop", "-t", "30", conteneur], capture_output=True)))
+        arret.daemon = True
+        arret.start()
+        try:
+            lancer_cmd(cmd, env=env)
+        finally:
+            arret.cancel()
+        # Statistiques relues sur le dossier (aussi valables pour une exécution interrompue)
+        _, texte = lancer_cmd([*base, IMAGE_AIDER, "./benchmark/benchmark.py", "--stats", nom], env=env, capture=True)
+        lu = dict(re.findall(r"^\s*(pass_rate_\d|percent_cases_well_formed|seconds_per_case|test_cases|total_tests"
+                             r"|exhausted_context_windows|error_outputs):\s*([\d.]+)", texte, re.M))
         prefixe = f"aider_{p.get('langages') or 'tous'}"
-        scores = {f"{prefixe}:{k}": float(v) for k, v in lu.items()}
+        scores = {f"{prefixe}:{k}": float(v) for k, v in lu.items() if k != "total_tests"}
         (d / "agent").mkdir(parents=True, exist_ok=True)
-        (d / "agent" / "score.json").write_text(json.dumps({"scores": scores, "details": {"sortie": texte[-4000:]}}, indent=2) + "\n")
+        (d / "agent" / "score.json").write_text(json.dumps({"scores": scores, "details": {
+            "exercices_total": lu.get("total_tests"), "sortie": texte[-4000:]}}, indent=2) + "\n")
         return scores
 
     def f_charge(self, p, d):

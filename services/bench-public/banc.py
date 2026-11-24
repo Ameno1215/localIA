@@ -54,7 +54,8 @@ def ecrire(chemin: Path, objet) -> None:
 
 
 def jsonl(chemin: Path) -> list[dict]:
-    return [json.loads(l) for l in chemin.read_text().splitlines() if l.strip()]
+    # split("\n") et pas splitlines() : les textes de LongBench contiennent des U+2028, \x1c… que splitlines() coupe
+    return [json.loads(l) for l in chemin.read_text().split("\n") if l.strip()]
 
 
 def options_modele(ap: argparse.ArgumentParser) -> None:
@@ -132,6 +133,11 @@ def stats_reponses(reponses: list[dict]) -> dict:
 
 # ----------------------------------------------------------------------------- préparation (avec Internet)
 
+def load_dataset_simple(nom: str) -> None:
+    from datasets import load_dataset
+    print(f"  {len(load_dataset(nom, split='train'))} lignes")
+
+
 def cmd_preparer(a) -> None:
     echecs = []
 
@@ -187,6 +193,7 @@ def cmd_preparer(a) -> None:
     etape("EvalPlus (HumanEval+, MBPP+)", evalplus_jeux)
     etape("MultiPL-E HumanEval C++", multipl_e)
     etape("LongBench v2", longbench)
+    etape("RULER : essais de Paul Graham (cache)", lambda: load_dataset_simple("baber/paul_graham_essays"))
     print("\nRULER : jeux générés au lancement (tokenizer du modèle + essais publics téléchargés à chaque fois).")
     if echecs:
         print(f"⚠ Échecs : {', '.join(echecs)}. GPQA est soumis à conditions : accepter sur huggingface.co/datasets/Idavidrein/gpqa "
