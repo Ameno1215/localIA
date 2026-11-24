@@ -20,3 +20,6 @@ workspace/
 
 # Réglages locaux de Claude Code
 .claude/settings.local.json
+
+# Résultats de la suite de tests de charge (bench/)
+bench/resultats/

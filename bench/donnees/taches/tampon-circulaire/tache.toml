@@ -1,0 +1,11 @@
+# Ticket d'exemple (C embarqué) : remplacer/compléter par 15 à 20 tickets internes clos.
+consigne = """Implémente les fonctions de src/tampon.c : un tampon circulaire d'octets sans allocation
+dynamique, décrit dans src/tampon.h. Ne modifie ni src/tampon.h ni les tests. Lance `make test`
+et corrige jusqu'à ce que tous les tests passent."""
+verifier = "make -s clean test"
+delai_s = 900
+fichiers_proteges = ["src/tampon.h", "tests/test_tampon.c", "Makefile"]
+controles = [
+  "! grep -nE '\\b(malloc|calloc|realloc|free)\\b' src/tampon.c",
+  "command -v cppcheck >/dev/null || exit 0; cppcheck --error-exitcode=1 --quiet --enable=warning src/",
+]

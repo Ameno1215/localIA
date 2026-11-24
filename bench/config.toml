@@ -1,0 +1,209 @@
+# Configuration de la suite de tests de charge et de limites (voir bench/README.md).
+#
+# Un « profil » décrit une installation : où sont la passerelle LiteLLM, les serveurs vLLM,
+# la pile RAG, et quelle charge lui envoyer. On choisit le profil avec --profil ou BENCH_PROFIL.
+# Les « rôles » (code-agent, fast, vision) sont ceux du benchmark ; chaque rôle pointe vers
+# un nom de modèle LiteLLM et, pour la phase 1, vers son serveur vLLM direct.
+
+profil_defaut = "pc-test"
+
+# Objectifs de service (SLO) et critères go / no-go du benchmark, communs à tous les profils.
+# Un profil peut en redéfinir une partie dans sa propre section [profils.<nom>.slo].
+[slo]
+ttft_chaud_s = 3.0          # TTFT p95 d'un tour suivant (préfixe en cache)
+ttft_froid_64k_s = 45.0     # TTFT p95 d'un prompt froid de 64K tokens (proportionnel en dessous)
+itl_p99_ms = 150.0          # latence inter-tokens p99
+taux_erreur = 0.005         # 0,5 % toutes causes
+surcout_litellm_p95_ms = 50.0
+rerank_p95_ms = 500.0       # 50 candidats
+recherche_p95_ms = 200.0    # requête vectorielle
+rappel5 = 0.85              # rappel@5 RAG avec reranker
+genou_code_agent = 15       # sessions simultanées à 32K, TPOT p95 tenu
+genou_fast = 30             # requêtes simultanées, TPOT p95 tenu
+reprise_max_s = 600         # modèle revenu en moins de 10 min
+derive_endurance = 0.10     # latence p95 à moins de 10 % de la première heure
+frequence_min_mhz = 1400
+acpi_max_c = 90.0
+taux_outils_invalides = 0.02
+qualite_min = 0.5           # part de tickets internes résolus (phase 7) ; à fixer par l'équipe
+
+[slo.vitesse_min]           # tok/s par requête au 95e centile (le plus lent)
+code-agent = 20.0
+fast = 50.0
+vision = 10.0
+
+# ---------------------------------------------------------------------------
+# PC de test actuel : un seul vLLM (qwen-local, Qwen3.5-4B, 2 séquences max).
+# Seuils revus à la baisse : le but ici est de valider la suite, pas la machine.
+# ---------------------------------------------------------------------------
+[profils.pc-test]
+passerelle = "http://localhost:4000"
+metriques = ["http://localhost:8000/metrics"]
+
+[profils.pc-test.roles.code-agent]
+modele = "qwen-local"
+direct = "http://localhost:8000"
+
+[profils.pc-test.slo]
+genou_code_agent = 2
+genou_fast = 2
+
+[profils.pc-test.slo.vitesse_min]
+code-agent = 20.0
+fast = 20.0
+vision = 10.0
+
+[profils.pc-test.capacite]
+niveaux = [1, 2, 4]
+longueurs = [2000, 16000, 32000]
+duree_palier_s = 60
+max_tokens = 256
+
+[profils.pc-test.charge]
+paliers = [1, 2, 4]
+palier_cible = 2
+duree_palier_s = 300
+etapes = [8, 15]
+contexte_debut = 2000
+contexte_fin = 20000
+systeme_tokens = 1500
+reflexion_s = [5, 20]
+max_tokens = 300
+prob_rag = 0.3
+modele_embeddings = "bge-m3"
+max_parallel_par_cle = 2
+
+[profils.pc-test.charge.melange]
+code-agent = 1.0
+
+# Phase 3 : à lancer DANS le réseau docker (TEI et le reranker n'ont pas de port publié).
+[profils.pc-test.rag]
+backend = "tei"
+embed = "http://tei-embed"
+rerank = "http://tei-rerank"
+qdrant = "http://qdrant:6333"
+collection = "docs_internes"
+questions = "bench/donnees/questions_rag.jsonl"
+concurrences = [1, 4, 8]
+requetes_par_niveau = 40
+candidats_rerank = 50
+
+[profils.pc-test.limites]
+role = "code-agent"
+requetes_gourmandes = 20
+plafond_sans_max_tokens = 8192
+concurrence_outils = 4
+essais_outils = 20
+
+[[profils.pc-test.pannes]]
+nom = "vllm-arret"
+role = "code-agent"
+consigne = "Arrête vLLM : docker compose stop vllm, attends 20 s, puis docker compose start vllm"
+commande = "docker compose stop vllm && sleep 20 && docker compose start vllm"
+
+[[profils.pc-test.pannes]]
+nom = "litellm-redemarrage"
+role = "code-agent"
+consigne = "Redémarre LiteLLM et Postgres : docker compose restart postgres litellm"
+commande = "docker compose restart postgres litellm"
+
+[profils.pc-test.qualite]
+taches = "bench/donnees/taches"
+commande_agent = ["opencode", "run", "--auto"]
+modele_agent = ""           # ex. "ia-locale/qwen-local" ; vide = modèle par défaut d'OpenCode
+role_vision = ""            # pas de modèle vision sur le PC de test
+
+# ---------------------------------------------------------------------------
+# Grappe 4× DGX Spark, option A du benchmark :
+#   nœuds 1+2 DeepSeek-V4-Flash (TP=2), nœud 3 Qwen3.6-35B-A3B, nœud 4 Qwen3.8-27B + RAG.
+# Adapter les noms d'hôtes, les noms de modèles LiteLLM et les ports à l'installation réelle.
+# ---------------------------------------------------------------------------
+[profils.spark]
+passerelle = "http://spark1.lan:4000"
+metriques = [
+  "http://spark1.lan:8000/metrics",
+  "http://spark3.lan:8000/metrics",
+  "http://spark4.lan:8000/metrics",
+]
+
+[profils.spark.roles.code-agent]
+modele = "code-agent"
+direct = "http://spark1.lan:8000"
+
+[profils.spark.roles.fast]
+modele = "fast"
+direct = "http://spark3.lan:8000"
+
+[profils.spark.roles.vision]
+modele = "vision"
+direct = "http://spark4.lan:8000"
+
+[profils.spark.capacite]
+niveaux = [1, 2, 4, 8, 12, 16, 24, 32, 48]
+longueurs = [4000, 32000, 64000]
+duree_palier_s = 180
+max_tokens = 512
+
+[profils.spark.charge]
+paliers = [10, 20, 30, 45]
+palier_cible = 30
+duree_palier_s = 900
+etapes = [15, 30]
+contexte_debut = 10000
+contexte_fin = 80000
+systeme_tokens = 6000
+reflexion_s = [5, 30]
+max_tokens = 512
+prob_rag = 0.2
+modele_embeddings = "embeddings"
+max_parallel_par_cle = 4
+
+[profils.spark.charge.melange]
+code-agent = 0.6
+fast = 0.3
+vision = 0.1
+
+[profils.spark.rag]
+backend = "vllm"
+embed = "http://spark4.lan:8001"
+rerank = "http://spark4.lan:8002"
+qdrant = "http://spark4.lan:6333"
+collection = "docs_internes"
+questions = "bench/donnees/questions_rag.jsonl"
+concurrences = [1, 8, 16, 32]
+requetes_par_niveau = 200
+candidats_rerank = 50
+
+[profils.spark.limites]
+role = "code-agent"
+requetes_gourmandes = 20
+plafond_sans_max_tokens = 8192
+concurrence_outils = 16
+essais_outils = 100
+
+[[profils.spark.pannes]]
+nom = "fast-vllm-tue"
+role = "fast"
+consigne = "Sur spark3 : docker compose stop vllm. LiteLLM doit basculer fast sur son repli."
+
+[[profils.spark.pannes]]
+nom = "noeud2-redemarrage"
+role = "code-agent"
+consigne = "Redémarre spark2 (sudo reboot). Le code-agent TP=2 tombe ; le repli doit prendre le relais."
+
+[[profils.spark.pannes]]
+nom = "lien-200gbe"
+role = "code-agent"
+consigne = "Débranche un câble 200 GbE d'une paire TP pendant 60 s, puis rebranche-le."
+
+[[profils.spark.pannes]]
+nom = "litellm-redemarrage"
+role = "code-agent"
+consigne = "Sur spark1 : docker compose restart postgres litellm. Aucune clé ne doit être perdue."
+
+[profils.spark.qualite]
+taches = "bench/donnees/taches"
+commande_agent = ["opencode", "run", "--auto"]
+modele_agent = ""
+role_vision = "vision"
+questions_vision = "bench/donnees/questions_vision.jsonl"

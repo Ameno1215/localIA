@@ -9,6 +9,8 @@ Elle tourne aujourd'hui sur un PC de test (RTX 8 Go) et est prête à passer sur
 
 📖 **Toute la documentation est dans [GUIDE.md](GUIDE.md)** : fonctionnement, utilisation, passage au Spark, dépannage.
 
+🧪 **Tests de charge et de limites** (plan de test du benchmark Spark, phases 0 à 7) : voir [bench/README.md](bench/README.md).
+
 ## Démarrage rapide
 
 ```bash
