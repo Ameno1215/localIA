@@ -1,24 +1,27 @@
 """Serveur MCP "docs-internes".
 
-Outils exposés aux agents (NVIDIA NAT, OpenCode, Open WebUI) :
+Outils exposés aux agents (OpenCode, Open WebUI) :
   - rechercher_docs : RAG sur les normes / docs internes (Qdrant + bge-m3 + reranker)
   - lister_fichiers / lire_fichier / ecrire_fichier / executer_commande : travail sur ./workspace,
-    seulement si OUTILS_CODE=1 (agent NAT local). OpenCode utilise ses propres outils, sur le poste.
+    seulement si OUTILS_CODE=1 (désactivé par défaut). OpenCode utilise ses propres outils, sur le poste.
 """
 
 import html
 import logging
 import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote, unquote
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from qdrant_client import QdrantClient
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
+
+import journal
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_URL = os.environ.get("EMBED_URL", "http://localhost:8081")
@@ -27,9 +30,9 @@ COLLECTION = os.environ.get("COLLECTION", "docs_internes")
 # "tei" : Text Embeddings Inference (PC x86, CPU). "vllm" : vLLM en mode pooling (Spark ARM64, où TEI n'existe pas).
 RAG_BACKEND = os.environ.get("RAG_BACKEND", "tei")
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace")).resolve()
-# 1 : outils fichiers + commandes sur ./workspace (agent NAT local).
+# 1 : outils fichiers + commandes sur ./workspace (aucun client ne les utilise aujourd'hui).
 # 0 : seulement rechercher_docs — obligatoire dès que le serveur est joignable par le réseau (Spark).
-OUTILS_CODE = os.environ.get("OUTILS_CODE", "1") == "1"
+OUTILS_CODE = os.environ.get("OUTILS_CODE", "0") == "1"
 DOCS = Path(os.environ.get("DOCS_DIR", "/docs")).resolve()
 # Adresse sous laquelle le navigateur de l'utilisateur joint ce serveur (liens vers les sources)
 DOCS_PUBLIC_URL = os.environ.get("DOCS_PUBLIC_URL", "http://localhost:9901").rstrip("/")
@@ -78,12 +81,22 @@ async def servir_doc(request: Request) -> Response:
     fichier = (DOCS / unquote(request.path_params["chemin"])).resolve()
     if DOCS not in fichier.parents or not fichier.is_file():
         return PlainTextResponse("Document introuvable", status_code=404)
-    return FileResponse(fichier, content_disposition_type="inline")
+    # Markdown et texte : affichés dans l'onglet au lieu d'être téléchargés
+    texte = "text/plain; charset=utf-8" if fichier.suffix.lower() in {".md", ".txt"} else None
+    return FileResponse(fichier, media_type=texte, content_disposition_type="inline")
 
 
 def _lien_document(source: str, page: int | None) -> str:
     ancre = f"#page={page}" if page else ""
     return f"{DOCS_PUBLIC_URL}/docs/{quote(source)}{ancre}"
+
+
+def _lien_source(ref: str, source: str, page: int | None) -> str:
+    """Lien d'une citation : le PDF ouvert directement à la page, sinon la page de l'extrait
+    (un navigateur n'affiche pas un .docx et ne sait pas l'ouvrir à une page)."""
+    if page and source.lower().endswith(".pdf"):
+        return _lien_document(source, page)
+    return f"{DOCS_PUBLIC_URL}/x/{ref}"
 
 
 PAGE_EXTRAIT = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -101,7 +114,7 @@ pre {{ white-space: pre-wrap; font-family: inherit; margin: 0; padding: .8rem 1r
   a {{ color: #8ab4f8; }} }}
 </style></head><body>
 <h1>{titre}</h1>
-<div class="meta">{page} · <a href="{lien}">Ouvrir le document{a_la_page}</a></div>
+<div class="meta">{page} · <a href="{lien}" target="_blank" rel="noopener">Ouvrir le document{a_la_page}</a></div>
 {corps}
 </body></html>"""
 
@@ -130,16 +143,24 @@ def _resoudre(ref: str) -> str | None:
 
 @mcp.custom_route("/refs", methods=["GET"])
 async def infos_refs(request: Request) -> Response:
-    """Pour le filtre Open WebUI : /refs?r=a1b2c3d4,e5f6a7b8 -> {ref: {source, page, url} ou null}."""
+    """Pour le filtre Open WebUI : /refs?r=a1b2c3d4,e5f6a7b8 -> {ref: {source, page, url, extrait} ou null}.
+    url : le document à la bonne page (PDF) ou, à défaut, l'extrait ; extrait : toujours la page de l'extrait."""
     infos = {}
-    for ref in request.query_params.get("r", "").split(",")[:50]:
+    demandees = [r for r in request.query_params.get("r", "").split(",")[:50] if r]
+    for ref in demandees:
         id_point = _resoudre(ref) if ref else None
         trouves = qdrant.retrieve(COLLECTION, ids=[id_point]) if id_point else []
+        p = trouves[0].payload if trouves else None
         infos[ref] = {
-            "source": trouves[0].payload["source"],
-            "page": trouves[0].payload.get("page"),
-            "url": f"{DOCS_PUBLIC_URL}/x/{ref}",
-        } if trouves else None
+            "source": p["source"],
+            "page": p.get("page"),
+            "url": _lien_source(ref, p["source"], p.get("page")),
+            "extrait": f"{DOCS_PUBLIC_URL}/x/{ref}",
+        } if p else None
+    # Envoyé par le filtre Open WebUI avec les références écrites par le modèle : une inconnue est inventée
+    if request.query_params.get("journal") == "1":
+        journal.references(demandees, [r for r in demandees if not infos.get(r)],
+                           request.query_params.get("modele"), request.query_params.get("client", "openwebui"))
     return JSONResponse(infos)
 
 
@@ -197,29 +218,67 @@ def _description_outil() -> str:
         "À appeler dès que la question porte sur le contenu de ces documents : cartes à puce, "
         "APDU, ATR, protocoles T=0/T=1, ISO 7816, ISO 14443, sans contact, GlobalPlatform, "
         "ou une norme/convention interne. Ne pas l'appeler pour une question générale sans rapport. "
-        "Retourne des extraits, chacun précédé de sa référence, par exemple [réf a1b2c3d4 | fichier, p.N]. "
+        "Retourne des extraits, chacun précédé de sa référence et de son lien, par exemple "
+        "[réf a1b2c3d4 | fichier, p.N | https://…]. "
         "OBLIGATOIRE dans ta réponse : après chaque phrase qui utilise un extrait, écris sa référence "
         "entre crochets, par exemple « L'ATR fait au plus 32 octets [a1b2c3d4]. » ; si une phrase "
         "s'appuie sur plusieurs extraits : [a1b2c3d4][e5f6a7b8]. Recopie les références exactement, "
         "n'en invente jamais, et n'affirme rien qui ne figure pas dans les extraits. "
-        "N'écris PAS de section « Sources » ni de liens : ils sont ajoutés automatiquement."
+        "Termine par une section « Sources » : une ligne par référence citée, au format "
+        "« - [a1b2c3d4] fichier, p.N : lien », le lien recopié tel quel depuis l'extrait. "
+        "N'écris aucun autre lien."
     )
 
 
+def _ms(debut: float, fin: float) -> float:
+    return round((fin - debut) * 1000, 1)
+
+
+def _client(ctx: Context | None) -> str | None:
+    """Qui appelle : Open WebUI (réseau Docker) ou un poste (OpenCode, via Caddy). Sans garantie selon le transport."""
+    try:
+        requete = ctx.request_context.request
+        agent = requete.headers.get("user-agent", "")
+        via_caddy = "x-forwarded-for" in requete.headers
+        return ("poste:" if via_caddy else "interne:") + agent[:60]
+    except Exception:
+        return None
+
+
 @mcp.tool(description=_description_outil())
-def rechercher_docs(question: str, nb_resultats: int = 5) -> str:
+def rechercher_docs(question: str, nb_resultats: int = 5, ctx: Context | None = None) -> str:
     """Recherche dans les documents internes."""
-    log.info("rechercher_docs(%r)", question)
-    candidats = qdrant.query_points(COLLECTION, query=embed([question])[0], limit=20).points
+    id_requete = uuid.uuid4().hex[:12]
+    log.info("rechercher_docs %s (%d caractères)", id_requete, len(question))
+    t0 = time.perf_counter()
+    vecteur = embed([question])[0]
+    t1 = time.perf_counter()
+    candidats = qdrant.query_points(COLLECTION, query=vecteur, limit=20).points
+    t2 = time.perf_counter()
     if not candidats:
+        journal.recherche(id_requete, question, _client(ctx), nb_resultats=nb_resultats, candidats=[], retenus=[],
+                          t_embed_ms=_ms(t0, t1), t_qdrant_ms=_ms(t1, t2), t_total_ms=_ms(t0, t2))
         return "Aucun document indexé ne correspond."
     textes = [c.payload["texte"] for c in candidats]
-    classes = sorted(rerank(question, textes), key=lambda x: x["score"], reverse=True)[:nb_resultats]
+    scores = rerank(question, textes)
+    t3 = time.perf_counter()
+    classes = sorted(scores, key=lambda x: x["score"], reverse=True)[:nb_resultats]
+    rerank_par_index = {x["index"]: x["score"] for x in scores}
+    journal.recherche(
+        id_requete, question, _client(ctx), nb_resultats=nb_resultats,
+        candidats=[{"ref": _ref(c.id), "source": c.payload["source"], "page": c.payload.get("page"),
+                    "score_vecteur": round(c.score, 4), "score_rerank": round(rerank_par_index.get(i, 0.0), 4)}
+                   for i, c in enumerate(candidats)],
+        retenus=[_ref(candidats[x["index"]].id) for x in classes],
+        t_embed_ms=_ms(t0, t1), t_qdrant_ms=_ms(t1, t2), t_rerank_ms=_ms(t2, t3), t_total_ms=_ms(t0, t3),
+    )
     blocs = []
     for x in classes:
         p = candidats[x["index"]].payload
+        ref = _ref(candidats[x["index"]].id)
         page = f", p.{p['page']}" if p.get("page") else ""
-        blocs.append(f"[réf {_ref(candidats[x['index']].id)} | {p['source']}{page}]\n{p['texte']}")
+        lien = _lien_source(ref, p["source"], p.get("page"))
+        blocs.append(f"[réf {ref} | {p['source']}{page} | {lien}]\n{p['texte']}")
     return "\n\n---\n\n".join(blocs)
 
 

@@ -1,0 +1,257 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Local AI Platform</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: technical three-tier schematic (clients / app server / GPU node), then flow matrix, component table, security notes, scaling */
+:root{
+  --bg:#f5f7f6; --surface:#ffffff; --fg:#17201d; --muted:#5b6964; --line:#c9d3cf;
+  --nv:#5f8f1f; --nv-soft:#e8f0dc; --srv:#2f6f8f; --srv-soft:#dfeef4; --accent:#b5651d;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121715; --surface:#1a211e; --fg:#e4ebe8; --muted:#94a39d; --line:#33403b;
+  --nv:#9cc95a; --nv-soft:#24301a; --srv:#6fb3d3; --srv-soft:#173039; --accent:#e39a55; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121715; --surface:#1a211e; --fg:#e4ebe8; --muted:#94a39d; --line:#33403b;
+  --nv:#9cc95a; --nv-soft:#24301a; --srv:#6fb3d3; --srv-soft:#173039; --accent:#e39a55; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.55}
+.wrap{max-width:1040px;margin:0 auto;padding-block:32px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:30px}
+h1{font-size:1.8rem;font-weight:600;margin:0;text-wrap:balance;letter-spacing:-.01em}
+h2{font-size:1.1rem;font-weight:600;margin:0 0 10px}
+.lede{color:var(--muted);margin:6px 0 0;max-width:72ch}
+.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:.85rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:14px;height:14px;border-radius:3px;border:1.5px solid}
+.diagram{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
+.diagram svg{display:block;min-width:820px;width:100%;height:auto}
+svg text{font-family:var(--sans);fill:var(--fg)}
+svg .mono{font-family:var(--mono)}
+svg .mut{fill:var(--muted)}
+svg .t-srv{fill:var(--srv)} svg .t-nv{fill:var(--nv)} svg .t-acc{fill:var(--accent)}
+svg .box-srv{fill:var(--srv-soft);stroke:var(--srv);stroke-width:1.5}
+svg .box-nv{fill:var(--nv-soft);stroke:var(--nv);stroke-width:1.5}
+svg .box-user{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+svg .chip{fill:var(--surface);stroke:var(--srv);stroke-width:1}
+svg .chip-nv{fill:var(--surface);stroke:var(--nv);stroke-width:1.5}
+svg .net{fill:none;stroke:var(--srv);stroke-width:1;stroke-dasharray:3 3}
+svg .arrow{stroke:var(--fg);stroke-width:1.6;fill:none}
+svg .arrow-i{stroke:var(--muted);stroke-width:1.2;fill:none}
+svg .fw{fill:var(--accent)}
+svg .fence{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-dasharray:7 5}
+svg .head{fill:var(--fg)} svg .head-m{fill:var(--muted)}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:640px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:500}
+td.m,code{font-family:var(--mono);font-size:.86em}
+td.m{white-space:nowrap}
+.pill{display:inline-block;font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.p-srv{background:var(--srv-soft);color:var(--srv)} .p-nv{background:var(--nv-soft);color:var(--nv)} .p-u{border:1px solid var(--line);color:var(--muted)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 18px}
+.card ul{margin:0;padding-left:18px;display:grid;gap:5px}
+.card li{font-size:.92rem}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.step{border-top:3px solid var(--nv);background:var(--surface);border-radius:0 0 8px 8px;padding:12px 16px 14px;border-left:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.step .k{font-family:var(--mono);font-size:.78rem;color:var(--muted);letter-spacing:.04em}
+.step b{display:block;font-size:1.02rem;margin:2px 0 4px}
+.step span{color:var(--muted);font-size:.9rem}
+.note{color:var(--muted);font-size:.88rem;max-width:80ch;margin:10px 0 0}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Our local AI platform</h1>
+    <p class="lede">Self-hosted LLM platform for a coding assistant, an internal-standards search (RAG) and a web chat. It has two tiers: an x86 application server for access, apps and data, and an NVIDIA DGX Spark dedicated to inference. Everything is deployed with Docker Compose and runs offline once the models are downloaded.</p>
+  </header>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--srv-soft);border-color:var(--srv)"></i>Application server (x86_64)</span>
+    <span><i class="sw" style="background:var(--nv-soft);border-color:var(--nv)"></i>Inference node (DGX Spark, arm64)</span>
+    <span><i class="sw" style="background:var(--accent);border-color:var(--accent)"></i>Port reachable from the network</span>
+  </div>
+
+  <div class="diagram" role="img" aria-label="Clients reach Caddy on the application server over HTTPS ports 443 and 8443. Caddy forwards to LiteLLM, the MCP docs server and Open WebUI on an internal Docker network, alongside Postgres, Qdrant and TEI. LiteLLM calls vLLM on the DGX Spark on port 8000 with an API key.">
+    <svg viewBox="0 0 1000 760" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head"/></marker>
+        <marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-m"/></marker>
+      </defs>
+
+      <rect x="10" y="10" width="980" height="740" rx="14" class="fence"/>
+      <text x="30" y="34" font-size="12" font-weight="600" class="t-acc">INTERNAL LAN · NO OUTBOUND INTERNET NEEDED AT RUNTIME</text>
+
+      <!-- Clients -->
+      <rect x="130" y="50" width="330" height="78" rx="8" class="box-user"/>
+      <text x="150" y="75" font-size="14.5" font-weight="600">Developer workstations</text>
+      <text x="150" y="95" font-size="12" class="mut">OpenCode (CLI / VS Code / JetBrains)</text>
+      <text x="150" y="113" font-size="11.5" class="mono mut">API key sk-… · MCP team token</text>
+      <rect x="540" y="50" width="330" height="78" rx="8" class="box-user"/>
+      <text x="560" y="75" font-size="14.5" font-weight="600">Browsers</text>
+      <text x="560" y="95" font-size="12" class="mut">Web chat, personal account</text>
+      <text x="560" y="113" font-size="11.5" class="mono mut">internal CA cert installed</text>
+
+      <path d="M295 128 L295 196" class="arrow" marker-end="url(#ah)"/>
+      <text x="305" y="160" font-size="11.5" class="mono">443 /v1 · /mcp</text>
+      <path d="M705 128 L705 196" class="arrow" marker-end="url(#ah)"/>
+      <text x="715" y="160" font-size="11.5" class="mono">8443</text>
+
+      <!-- App server -->
+      <rect x="40" y="186" width="920" height="330" rx="10" class="box-srv"/>
+      <text x="60" y="212" font-size="14" font-weight="600" class="t-srv">APPLICATION SERVER</text>
+      <text x="245" y="212" font-size="12" class="mut">x86_64 · Linux · Docker Compose · no GPU · 4 vCPU · 16 GB RAM</text>
+
+      <!-- Caddy -->
+      <rect x="200" y="226" width="600" height="50" rx="6" class="chip"/>
+      <text x="500" y="247" text-anchor="middle" font-size="13.5" font-weight="600">Caddy 2.10 · TLS reverse proxy (internal CA)</text>
+      <text x="500" y="266" text-anchor="middle" font-size="11" class="mono mut">:443 → / LiteLLM · /mcp MCP (Bearer) · /docs /x sources   |   :8443 → Open WebUI</text>
+      <circle cx="295" cy="226" r="5" class="fw"/><circle cx="705" cy="226" r="5" class="fw"/>
+
+      <!-- internal network -->
+      <rect x="58" y="290" width="884" height="210" rx="8" class="net"/>
+      <text x="72" y="306" font-size="10.5" class="mono mut">docker bridge network (not exposed)</text>
+
+      <path d="M260 276 L160 316" class="arrow-i" marker-end="url(#ahm)"/>
+      <path d="M500 276 L500 316" class="arrow-i" marker-end="url(#ahm)"/>
+      <path d="M740 276 L840 316" class="arrow-i" marker-end="url(#ahm)"/>
+
+      <g>
+        <rect x="72" y="318" width="180" height="76" rx="6" class="chip"/>
+        <text x="84" y="340" font-size="13" font-weight="600">LiteLLM v1.98</text>
+        <text x="84" y="358" font-size="11.5" class="mut">OpenAI-compatible gateway</text>
+        <text x="84" y="374" font-size="11.5" class="mut">keys · quotas · logs</text>
+        <text x="84" y="389" font-size="10.5" class="mono mut">:4000</text>
+
+        <rect x="410" y="318" width="180" height="76" rx="6" class="chip"/>
+        <text x="422" y="340" font-size="13" font-weight="600">MCP docs-internes</text>
+        <text x="422" y="358" font-size="11.5" class="mut">standards search tool</text>
+        <text x="422" y="374" font-size="11.5" class="mut">read-only, cites sources</text>
+        <text x="422" y="389" font-size="10.5" class="mono mut">:9901 · Python</text>
+
+        <rect x="748" y="318" width="180" height="76" rx="6" class="chip"/>
+        <text x="760" y="340" font-size="13" font-weight="600">Open WebUI v0.11</text>
+        <text x="760" y="358" font-size="11.5" class="mut">chat UI, user accounts</text>
+        <text x="760" y="374" font-size="11.5" class="mut">history, file upload RAG</text>
+        <text x="760" y="389" font-size="10.5" class="mono mut">:8080</text>
+
+        <rect x="72" y="412" width="180" height="76" rx="6" class="chip"/>
+        <text x="84" y="434" font-size="13" font-weight="600">PostgreSQL 16</text>
+        <text x="84" y="452" font-size="11.5" class="mut">LiteLLM keys, spend,</text>
+        <text x="84" y="468" font-size="11.5" class="mut">usage logs</text>
+        <text x="84" y="483" font-size="10.5" class="mono mut">:5432</text>
+
+        <rect x="300" y="412" width="180" height="76" rx="6" class="chip"/>
+        <text x="312" y="434" font-size="13" font-weight="600">Qdrant v1.19</text>
+        <text x="312" y="452" font-size="11.5" class="mut">vector database</text>
+        <text x="312" y="468" font-size="11.5" class="mut">indexed standards</text>
+        <text x="312" y="483" font-size="10.5" class="mono mut">:6333</text>
+
+        <rect x="528" y="412" width="400" height="76" rx="6" class="chip"/>
+        <text x="540" y="434" font-size="13" font-weight="600">TEI 1.9 (CPU) · embeddings + reranker</text>
+        <text x="540" y="452" font-size="11.5" class="mut">bge-m3 (dense vectors) · bge-reranker-v2-m3</text>
+        <text x="540" y="468" font-size="11.5" class="mut">used by indexing, search and Open WebUI</text>
+        <text x="540" y="483" font-size="10.5" class="mono mut">:80 ×2</text>
+      </g>
+      <path d="M162 394 L162 412" class="arrow-i"/>
+      <path d="M500 394 L420 412" class="arrow-i"/>
+      <path d="M560 394 L640 412" class="arrow-i"/>
+      <path d="M838 394 L838 412" class="arrow-i"/>
+      <path d="M748 356 L252 356" class="arrow-i" stroke-dasharray="3 3"/>
+
+      <!-- server -> spark -->
+      <path d="M162 516 L162 596" class="arrow" marker-end="url(#ah)"/>
+      <text x="172" y="546" font-size="11.5" class="mono">HTTP :8000 · Bearer VLLM_API_KEY</text>
+      <text x="172" y="563" font-size="11.5" class="mut">chat, agent and tool calls</text>
+      <path d="M470 516 L470 596" class="arrow" marker-end="url(#ah)" stroke-dasharray="5 4"/>
+      <text x="480" y="555" font-size="11.5" class="mut">image transcription during indexing</text>
+
+      <!-- Spark -->
+      <rect x="40" y="604" width="920" height="132" rx="10" class="box-nv"/>
+      <text x="60" y="630" font-size="14" font-weight="600" class="t-nv">INFERENCE NODE · NVIDIA DGX SPARK</text>
+      <text x="335" y="630" font-size="12" class="mut">GB10 Grace Blackwell · 128 GB unified memory · DGX OS (Ubuntu, arm64)</text>
+      <circle cx="162" cy="604" r="5" class="fw"/>
+      <rect x="64" y="644" width="560" height="76" rx="6" class="chip-nv"/>
+      <text x="78" y="666" font-size="13.5" font-weight="600">vLLM 0.30 · OpenAI-compatible API, served as qwen-local</text>
+      <text x="78" y="685" font-size="11.5" class="mut">Nemotron 3.5 Super VL 120B-A12B (MoE) · NVFP4 · ~75 GB weights</text>
+      <text x="78" y="702" font-size="11.5" class="mut">262k-token context · 8 concurrent requests · FP8 KV cache · tool calling</text>
+      <text x="78" y="716" font-size="10.5" class="mono mut">:8000 vLLM · :9835, :9100 metrics · firewall: app server only</text>
+      <rect x="644" y="644" width="292" height="76" rx="6" class="chip-nv"/>
+      <text x="658" y="666" font-size="13" font-weight="600">Dedicated to the model</text>
+      <text x="658" y="685" font-size="11.5" class="mut">no other service on the node</text>
+      <text x="658" y="702" font-size="11.5" class="mut">GUI disabled</text>
+      <text x="658" y="716" font-size="10.5" class="mono mut">gpu-memory-utilization ≈ 0.85</text>
+    </svg>
+  </div>
+
+  <section>
+    <h2>Network flows</h2>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Source</th><th>Destination</th><th>Port</th><th>Protocol</th><th>Authentication</th></tr></thead>
+        <tbody>
+          <tr><td>Workstations (OpenCode)</td><td>App server · Caddy</td><td class="m">443</td><td class="m">HTTPS /v1</td><td>Personal LiteLLM key (<code>sk-…</code>), revocable</td></tr>
+          <tr><td>Workstations (OpenCode)</td><td>App server · Caddy</td><td class="m">443</td><td class="m">HTTPS /mcp</td><td>Team bearer token</td></tr>
+          <tr><td>Browsers</td><td>App server · Caddy</td><td class="m">8443</td><td class="m">HTTPS</td><td>Open WebUI account</td></tr>
+          <tr><td>App server · LiteLLM, MCP</td><td>DGX Spark · vLLM</td><td class="m">8000</td><td class="m">HTTP</td><td>Bearer API key, plus a source-IP firewall rule</td></tr>
+          <tr><td>App server · Prometheus</td><td>DGX Spark · GPU and node exporters</td><td class="m">9835, 9100</td><td class="m">HTTP</td><td>None: only the source-IP firewall rule protects them</td></tr>
+          <tr><td>Admins</td><td>Both machines</td><td class="m">22</td><td class="m">SSH</td><td>SSH keys</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Every other port is bound to localhost or the Docker bridge network. Server-to-Spark traffic stays inside the LAN in plain HTTP. It can go through TLS if the security policy requires it.</p>
+  </section>
+
+  <section>
+    <h2>Components</h2>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Component</th><th>Host</th><th>Image / version</th><th>Role</th><th>Persistent data</th></tr></thead>
+        <tbody>
+          <tr><td>Caddy</td><td><span class="pill p-srv">Server</span></td><td class="m">caddy:2.10.2</td><td>TLS termination, routing, internal CA</td><td>certificates</td></tr>
+          <tr><td>LiteLLM</td><td><span class="pill p-srv">Server</span></td><td class="m">litellm:v1.98.1</td><td>API gateway, per-user keys, quotas, routing</td><td>in Postgres</td></tr>
+          <tr><td>PostgreSQL</td><td><span class="pill p-srv">Server</span></td><td class="m">postgres:16-alpine</td><td>LiteLLM database</td><td>keys, usage</td></tr>
+          <tr><td>Open WebUI</td><td><span class="pill p-srv">Server</span></td><td class="m">open-webui:v0.11.4</td><td>Web chat</td><td>accounts, chats</td></tr>
+          <tr><td>MCP docs-internes</td><td><span class="pill p-srv">Server</span></td><td class="m">in-house (Python)</td><td>Search tool for standards, ingestion of PDF/Word</td><td>source documents</td></tr>
+          <tr><td>Qdrant</td><td><span class="pill p-srv">Server</span></td><td class="m">qdrant:v1.19.2</td><td>Vector index</td><td>embeddings</td></tr>
+          <tr><td>TEI ×2</td><td><span class="pill p-srv">Server</span></td><td class="m">text-embeddings-inference:cpu-1.9</td><td>Embeddings (bge-m3), reranking (bge-reranker-v2-m3)</td><td>model files</td></tr>
+          <tr><td>vLLM</td><td><span class="pill p-nv">Spark</span></td><td class="m">vLLM 0.30 (arm64)</td><td>LLM inference</td><td>model weights, compile cache</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Security</h2>
+      <ul>
+        <li>Two ports exposed on the server (443, 8443). From the server's IP, the Spark only accepts port 8000 (vLLM) and ports 9835 and 9100 (GPU and node metrics for Prometheus), plus SSH.</li>
+        <li>One API key per user, with quotas and usage tracking. Revoking a key cuts that user's access immediately.</li>
+        <li>The MCP server only offers read-only document search. No file or shell tools are reachable from the network.</li>
+        <li>Secrets (master key, DB password, tokens) live in a <code>.env</code> file with mode 600 and are never committed.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Operations</h2>
+      <ul>
+        <li>Runs fully offline (<code>HF_HUB_OFFLINE=1</code>). Internet is only needed to pull images and model weights, or they can come from a transfer disk.</li>
+        <li>All persistent data lives in one data directory per machine, so a backup is one folder.</li>
+        <li>The model is swapped through a profile in <code>config/modeles-spark/</code>. Clients keep the same model name.</li>
+        <li>Monitoring is Prometheus on the server (port 9090, localhost), which scrapes vLLM and the Spark exporters, plus a control panel on port 7000 (localhost/SSH) and a check script.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Scaling the inference tier</h2>
+    <div class="steps">
+      <div class="step"><div class="k">1 SPARK</div><b>Single inference node</b><span>A model of up to ~100 GB, 8 concurrent requests.</span></div>
+      <div class="step"><div class="k">2 SPARKS</div><b>Direct QSFP link, 200 Gb/s</b><span>Either one model split across both (vLLM + Ray, tensor parallel 2, NCCL over RoCE), or two replicas load-balanced by LiteLLM.</span></div>
+      <div class="step"><div class="k">4 SPARKS</div><b>200 GbE switch (RoCE)</b><span>A larger split model, or 2–4 replicas behind LiteLLM.</span></div>
+    </div>
+    <p class="note">The application server, the endpoints and the client configuration stay the same at every stage. Only LiteLLM's list of inference backends changes.</p>
+  </section>
+</div>
+
+</body></html>

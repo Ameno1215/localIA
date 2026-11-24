@@ -1,5 +1,9 @@
 # Secrets : seuls les .env*.example sont versionnés
 .env
+.env.vllm
+.compose.vllm.yml
+cache/
+ws/
 
 # Poids des modèles (~20 Go, téléchargés par scripts/01-telecharger-modeles.sh)
 models/
@@ -20,6 +24,12 @@ workspace/
 
 # Réglages locaux de Claude Code
 .claude/settings.local.json
+
+# Rapports de diagnostic (scripts/diagnostic-spark.sh)
+diagnostic-spark-*.txt
+
+# Benchmarks publics sans WS_DIR (scripts/bench-public.py) : jeux téléchargés, réponses des modèles
+/benchmarks/
 
 # Résultats de la suite de tests de charge (bench/)
 bench/resultats/

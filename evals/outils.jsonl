@@ -1,0 +1,4 @@
+{"id": "outil-norme", "question": "Que disent nos normes internes sur la journalisation en Python ?", "outil_attendu": "rechercher_docs"}
+{"id": "outil-calcul", "question": "Combien font 17 multiplié par 23 ? Réponds juste par le nombre.", "outil_attendu": null}
+{"id": "outil-code-general", "question": "Écris une fonction Python qui inverse une chaîne de caractères.", "outil_attendu": null}
+{"id": "outil-norme-tests", "question": "Quelle est la règle interne sur les tests unitaires des fonctions publiques ?", "outil_attendu": "rechercher_docs"}

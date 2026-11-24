@@ -102,18 +102,27 @@ code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-si
 
   <h2>Modes rapides</h2>
   <div class="modes">
-    <button class="mode" data-mode="tout"><b>Tout démarrer</b><span>Chat, RAG, agents</span></button>
+    <button class="mode" data-mode="tout"><b>Tout démarrer</b><span>Chat, RAG, agent de code. Applique aussi les mises à jour (git pull)</span></button>
     <button class="mode" data-mode="chat"><b>Mode chat</b><span>LLM + Open WebUI seulement</span></button>
-    <button class="mode" data-mode="agent"><b>Mode agent de code</b><span>LLM + RAG + outils (NAT, NemoClaw)</span></button>
+    <button class="mode" data-mode="agent"><b>Mode agent de code</b><span>LLM + recherche dans les normes</span></button>
     <button class="mode" data-mode="finetune"><b>Mode fine-tuning</b><span>Libère le GPU (vLLM arrêté)</span></button>
     <button class="mode" data-mode="rien"><b>Tout arrêter</b><span>Libère GPU et RAM, rien n'est perdu</span></button>
   </div>
 
+  <h2>Documents (normes)</h2>
+  <div class="carte">
+    <div class="ligne"><div><h3>Recherche dans les normes</h3><div class="role" id="docs-dossier">…</div></div><span class="badge b-off" id="docs-badge">…</span></div>
+    <div class="meta">Après avoir ajouté ou modifié des documents : <b>Indexer</b>. Seuls les fichiers nouveaux ou modifiés sont traités, images comprises (transcrites par le modèle s'il lit les images). mcp-docs est redémarré à la fin.</div>
+    <div class="actions">
+      <button class="btn prim" data-index="nouveaux">Indexer les nouveautés</button>
+      <button class="btn" data-index="texte" title="Sans solliciter le LLM : les images restent en attente pour une prochaine indexation">Texte seul (rapide)</button>
+      <button class="btn" data-index="tout" title="Efface l'index et relit tous les documents : après une suppression de fichiers">Tout réindexer</button>
+      <button class="btn" id="docs-journal">Voir le journal</button>
+    </div>
+  </div>
+
   <h2>Services Docker</h2>
   <div class="grille" id="services"></div>
-
-  <h2>NemoClaw : agent de code NVIDIA en sandbox</h2>
-  <div class="carte" id="nemoclaw"><span class="meta">Chargement…</span></div>
 
   <h2>Ce qui fonctionne</h2>
   <div class="tablewrap">
@@ -122,10 +131,8 @@ code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-si
     <tbody>
       <tr><td>Modèle <code>qwen-local</code> : Qwen3.5-4B AWQ</td><td><span class="badge b-ok">Testé</span></td><td>64K de contexte, raisonnement activé, 2 requêtes à la fois.</td></tr>
       <tr><td>Agent de code OpenCode</td><td><span class="badge b-ok">Testé</span></td><td>Jeu complet et testé en 30 s ; conversation suivie, diffs, commandes sur tes fichiers.</td></tr>
-      <tr><td>Recherche dans les normes (RAG + MCP)</td><td><span class="badge b-ok">Testé</span></td><td>Depuis OpenCode, NAT et Open WebUI. Seule la norme d'exemple est indexée.</td></tr>
+      <tr><td>Recherche dans les normes (RAG + MCP)</td><td><span class="badge b-ok">Testé</span></td><td>Depuis OpenCode et Open WebUI. Seule la norme d'exemple est indexée.</td></tr>
       <tr><td>LiteLLM : clés et quotas par personne</td><td><span class="badge b-ok">Testé</span></td><td>Suivi de consommation sur <code>:4000/ui</code>.</td></tr>
-      <tr><td>Agent NVIDIA NAT</td><td><span class="badge b-ok">Testé</span></td><td>Pour les tâches automatisées. Pour coder, préfère OpenCode.</td></tr>
-      <tr><td>NemoClaw</td><td><span class="badge b-off">Installé, arrêté</span></td><td>Agent isolé en sandbox, réservé aux agents autonomes (Spark).</td></tr>
       <tr><td>Open WebUI</td><td><span class="badge b-warn">Prêt, à configurer</span></td><td>Créer le compte admin, puis brancher le MCP <code>http://mcp-docs:9901/mcp</code>.</td></tr>
       <tr><td>Fine-tuning LoRA sur les normes</td><td><span class="badge b-off">Pas encore lancé</span></td><td>Scripts prêts dans <code>finetune/</code>. À faire avec tes vraies normes.</td></tr>
       <tr><td>Configuration DGX Spark</td><td><span class="badge b-off">Prête, non testée</span></td><td><code>docker-compose.spark.yml</code>, <code>.env.spark.example</code> (section 8 du guide).</td></tr>
@@ -165,43 +172,17 @@ opencode</pre><button class="btn">Copier</button></div>
   <details>
     <summary>Ajouter tes normes et documents internes (RAG)</summary>
     <div>
-      <p>Dépose tes PDF, DOCX, MD ou TXT dans <code>docs-internes/</code>, puis lance l'indexation (le mode agent doit tourner). Seuls les fichiers modifiés sont réindexés.</p>
-      <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py</pre><button class="btn">Copier</button></div>
+      <p>Dépose tes PDF, DOCX, MD ou TXT dans le dossier affiché dans la section <b>Documents</b> ci-dessus, puis clique sur <b>Indexer les nouveautés</b> (mcp-docs doit tourner). Seuls les fichiers modifiés sont réindexés. Les tableaux Word sont convertis, et les images (tableaux, schémas, pages scannées) sont transcrites par le modèle s'il lit les images (modèle par défaut, VL). En ligne de commande :</p>
+      <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py && docker compose restart mcp-docs</pre><button class="btn">Copier</button></div>
       <p>Pour tout réindexer :</p>
       <div class="cmd"><pre>docker compose exec mcp-docs python ingest.py --reset</pre><button class="btn">Copier</button></div>
     </div>
   </details>
 
   <details>
-    <summary>Agent NVIDIA NAT (tâches automatisées)</summary>
-    <div>
-      <p>Il travaille sur le dossier <code>workspace/</code> du serveur, cherche dans les normes, modifie les fichiers et lance les tests. Ta clé est lue dans <code>~/.config/ia-locale/env</code>.</p>
-      <div class="cmd"><pre>. ~/.config/ia-locale/env
-NAT_API_KEY=$LITELLM_API_KEY .venv/bin/nat run --config_file agent/config.yml --input "Corrige clients.py selon nos normes puis lance les tests"</pre><button class="btn">Copier</button></div>
-      <p>Pour suivre les outils que l'agent appelle vraiment :</p>
-      <div class="cmd"><pre>docker compose logs -f mcp-docs</pre><button class="btn">Copier</button></div>
-      <div class="note">Vérifie toujours le fichier réel et les tests. Un agent peut annoncer une modification qu'il n'a pas faite.</div>
-    </div>
-  </details>
-
-  <details>
-    <summary>Agent NemoClaw (Deep Agents Code)</summary>
-    <div>
-      <p>Démarre le sandbox avec le bouton ci-dessus (le mode agent doit tourner), puis ouvre l'agent dans un terminal :</p>
-      <div class="cmd"><pre>nemo-deepagents launch patate</pre><button class="btn">Copier</button></div>
-      <p>Envoyer un projet dans le sandbox, puis récupérer le résultat :</p>
-      <div class="cmd"><pre>nemo-deepagents patate upload workspace /sandbox/projet
-nemo-deepagents patate download /sandbox/projet ./resultat</pre><button class="btn">Copier</button></div>
-      <p>Lancer une tâche sans interaction (les écritures sont approuvées automatiquement) :</p>
-      <div class="cmd"><pre>nemo-deepagents patate exec --workdir /sandbox -- dcode -n "Lis normes/ puis corrige projet/clients.py"</pre><button class="btn">Copier</button></div>
-      <div class="note">Lance <code>dcode</code> depuis <code>/sandbox</code> avec des chemins relatifs (<code>projet/…</code>, <code>normes/…</code>). Si la commande est introuvable, recharge le terminal : <code>source ~/.bashrc</code>.</div>
-    </div>
-  </details>
-
-  <details>
     <summary>Créer un accès pour un collègue</summary>
     <div>
-      <p>Chaque personne a sa clé (2 requêtes en parallèle, 60 par minute). Elle sert dans Open WebUI, NAT et OpenCode.</p>
+      <p>Chaque personne a sa clé (2 requêtes en parallèle, 60 par minute). Elle sert dans Open WebUI et OpenCode.</p>
       <div class="cmd"><pre>./scripts/creer-cle-utilisateur.sh prenom.nom</pre><button class="btn">Copier</button></div>
     </div>
   </details>
@@ -248,6 +229,7 @@ $("#theme").onclick = () => {
 };
 
 function journal(titre, texte) {
+  delete $("#journal-titre").dataset.index;
   $("#journal-titre").textContent = titre;
   $("#journal-texte").textContent = texte || "(aucune sortie)";
   $("#journal").classList.add("ouvert");
@@ -265,7 +247,6 @@ async function action(url, titre, bouton) {
   } catch (e) { journal(titre + " : erreur", String(e)); }
   if (bouton) bouton.disabled = false;
   rafraichir();
-  chargerNemo();
 }
 
 function badge(s) {
@@ -308,8 +289,14 @@ async function rafraichir() {
     const g = d.machine.gpu;
     if (g) {
       $("#gpu-nom").textContent = `${g.nom.replace("NVIDIA GeForce ", "")} · driver ${g.driver}`;
-      $("#gpu-val").textContent = `${(g.utilise / 1024).toFixed(1)} / ${(g.total / 1024).toFixed(1)} Go VRAM · ${g.charge} %`;
-      $("#gpu-barre").style.width = `${Math.round(100 * g.utilise / g.total)}%`;
+      if (g.total) {
+        $("#gpu-val").textContent = `${(g.utilise / 1024).toFixed(1)} / ${(g.total / 1024).toFixed(1)} Go VRAM · ${g.charge} %`;
+        $("#gpu-barre").style.width = `${Math.round(100 * g.utilise / g.total)}%`;
+      } else {
+        // Mémoire unifiée (Spark) : la mémoire se lit dans la jauge RAM ; ici seulement la charge du GPU
+        $("#gpu-val").textContent = `mémoire unifiée (voir RAM) · charge ${g.charge ?? "?"} %`;
+        $("#gpu-barre").style.width = `${g.charge || 0}%`;
+      }
     }
     const m = d.machine.ram;
     $("#ram-val").textContent = `${(m.dispo / 1024).toFixed(1)} Go libres sur ${(m.total / 1024).toFixed(0)}`;
@@ -317,26 +304,40 @@ async function rafraichir() {
   } catch (e) { $("#services").textContent = "Impossible de joindre le serveur du panneau."; }
 }
 
-async function chargerNemo() {
-  const c = $("#nemoclaw");
+// Indexation : tâche longue côté serveur, suivie en direct
+let suiviIndex = null;
+async function etatIndex(ouvrirJournal) {
   try {
-    const d = await (await fetch("/api/nemoclaw")).json();
-    if (!d.installe) { c.innerHTML = `<span class="badge b-off">Non installé</span>`; return; }
-    const i = d.info || {};
-    c.innerHTML = `
-      <div class="ligne"><div><h3>Sandbox « ${d.sandbox} »</h3>
-        <div class="role">Agent ${i.agent || "langchain-deepagents-code"} · modèle ${i.model || "?"} via ${i.provider || "?"}</div></div>
-        <span class="badge ${d.pret ? "b-ok" : "b-off"}">${d.pret ? "Prêt" : "Arrêté"}</span></div>
-      <div class="meta">Le modèle doit tourner (vLLM) pour que l'agent réponde. Ouvrir l'agent : <code>nemo-deepagents launch ${d.sandbox}</code></div>
-      <div class="actions"></div>`;
-    const acts = c.querySelector(".actions");
-    const b = document.createElement("button");
-    b.className = "btn " + (d.pret ? "" : "prim");
-    b.textContent = d.pret ? "Arrêter le sandbox" : "Démarrer le sandbox";
-    b.onclick = () => action(`/api/nemoclaw/${d.pret ? "stop" : "start"}`, d.pret ? "Arrêt du sandbox" : "Démarrage du sandbox", b);
-    acts.appendChild(b);
-  } catch (e) { c.textContent = "État NemoClaw indisponible."; }
+    const d = await (await fetch("/api/indexation")).json();
+    $("#docs-dossier").textContent = d.dossier
+      ? `Dossier lu : ${d.dossier} · ${d.fichiers ?? "?"} fichier(s)`
+      : "Dossier des documents introuvable (mcp-docs non configuré ?)";
+    const [txt, cls] = d.en_cours ? ["Indexation en cours…", "b-warn"]
+      : d.ok === true ? ["Indexation terminée", "b-ok"] : d.ok === false ? ["Indexation en échec", "b-bad"] : ["Prêt", "b-off"];
+    $("#docs-badge").textContent = txt; $("#docs-badge").className = "badge " + cls;
+    document.querySelectorAll("[data-index]").forEach((b) => (b.disabled = d.en_cours));
+    const ouvert = $("#journal").classList.contains("ouvert") && $("#journal-titre").dataset.index === "1";
+    if (ouvrirJournal || ouvert) {
+      journal((d.titre || "Indexation") + (d.en_cours ? " : en cours" : d.ok === false ? " : échec" : d.ok ? " : terminée" : ""),
+        d.lignes || "Aucune indexation lancée depuis le démarrage du panneau.");
+      $("#journal-titre").dataset.index = "1";
+    }
+    clearTimeout(suiviIndex);
+    if (d.en_cours) suiviIndex = setTimeout(() => etatIndex(false), 2000);
+  } catch (e) { $("#docs-dossier").textContent = "Impossible de joindre le serveur du panneau."; }
 }
+document.querySelectorAll("[data-index]").forEach((b) => {
+  b.onclick = async () => {
+    if (b.dataset.index === "tout" && !confirm("Effacer l'index et relire tous les documents ? Avec les images, cela peut prendre des heures.")) return;
+    b.disabled = true;
+    const r = await fetch(`/api/indexer/${b.dataset.index}`, { method: "POST", headers: { "X-Panneau": "1" } });
+    const d = await r.json();
+    if (d.ok === false) journal("Indexation", d.sortie);
+    else etatIndex(true);
+  };
+});
+$("#docs-journal").onclick = () => etatIndex(true);
+$("#journal-fermer").addEventListener("click", () => delete $("#journal-titre").dataset.index);
 
 document.querySelectorAll(".mode").forEach((b) => {
   b.onclick = () => action(`/api/mode/${b.dataset.mode}`, `Mode : ${b.querySelector("b").textContent}`, b);
@@ -349,7 +350,8 @@ document.querySelectorAll(".cmd button").forEach((b) => {
   };
 });
 
-rafraichir(); chargerNemo();
+rafraichir();
+etatIndex(false);
 setInterval(rafraichir, 10000);
 </script>
 </body>

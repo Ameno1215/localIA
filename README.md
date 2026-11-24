@@ -9,7 +9,15 @@ Elle tourne aujourd'hui sur un PC de test (RTX 8 Go) et est prête à passer sur
 
 📖 **Toute la documentation est dans [GUIDE.md](GUIDE.md)** : fonctionnement, utilisation, passage au Spark, dépannage.
 
-🧪 **Tests de charge et de limites** (plan de test du benchmark Spark, phases 0 à 7) : voir [bench/README.md](bench/README.md).
+| Fichier | Pour quoi faire |
+|---|---|
+| [GUIDE.md](GUIDE.md) | Comprendre et utiliser la plateforme |
+| [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) | **Tester sur le DGX Spark**, pas à pas (branche `spark`) |
+| [SPARK-DUO.md](SPARK-DUO.md) | Relier deux Spark pour un modèle plus gros (validé le 09/11/2026). Voir aussi la section ci-dessous |
+| [docs/](docs/) | Notes, réflexions, décisions et schémas d'architecture (Markdown + Mermaid) |
+| [AUDIT-NVIDIA.md](AUDIT-NVIDIA.md) | Écarts avec les tutoriels et recettes officiels NVIDIA, et corrections faites |
+| [PLAN-EVALUATION.md](PLAN-EVALUATION.md) | Comparer les modèles : benchmarks publics prêts à lancer (`scripts/bench-public.py`) et plan par cas d'usage (code C, bugs, doc, exigences, RAG, charge) |
+| [bench/README.md](bench/README.md) | Tests de charge et de limites du cluster Spark (phases 0 à 7 du plan de test, jusqu'au tableau go / no-go) |
 
 ## Démarrage rapide
 
@@ -45,7 +53,7 @@ Installe OpenCode et le configure. Le script demande la clé. Le détail est dan
 ./scripts/00-prerequis.sh
 ```
 
-Installe le driver NVIDIA, Docker compose, le NVIDIA Container Toolkit et Python. Il demande sudo, et il faut redémarrer ensuite.
+Sur le PC de test : installe le driver NVIDIA, Docker compose, le NVIDIA Container Toolkit et Python (sudo, redémarrage ensuite). Sur le DGX Spark : n'installe rien (pilote et Docker sont déjà en place), il vérifie seulement et prépare l'outil de téléchargement.
 
 ```bash
 ./scripts/01-telecharger-modeles.sh
@@ -60,7 +68,7 @@ docker compose up -d
 
 Crée la configuration à partir du modèle (pense à changer les secrets), puis démarre la stack.
 
-## État au 12/10/2026
+## État (PC de test au 12/10/2026 ; configuration Spark au 22/10/2026)
 
 | Brique | État |
 |---|---|
@@ -69,8 +77,23 @@ Crée la configuration à partir du modèle (pense à changer les secrets), puis
 | Recherche dans les normes (RAG + MCP) | ✅ testé, avec la norme d'exemple seulement |
 | Clés et quotas par personne (LiteLLM) | ✅ testé |
 | Panneau web de contrôle | ✅ testé |
-| Agent NVIDIA NAT | ✅ testé |
-| NemoClaw | ✅ installé, arrêté (réservé aux agents autonomes) |
 | Open WebUI | ⚠️ prêt, compte admin à créer |
 | Fine-tuning LoRA `normes` | ⏳ scripts prêts, pas encore lancé |
-| Configuration DGX Spark | ⏳ fichiers prêts, non testés |
+| Configuration DGX Spark (branche `spark`, modèle Nemotron 3.5 Super VL 120B) | ⏳ prête et vérifiée sur PC (rendu Docker, scripts), **jamais lancée sur un Spark** : voir [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md) |
+
+## Tester le duo (2 Spark) à côté de l'installation 1 Spark
+
+Garder le dossier actuel (branche `spark`) intact, et cloner le dépôt une seconde fois sur la branche `spark-duo`. Le pas-à-pas complet (câble, pare-feu, copies, démarrage, dépannage) est dans [SPARK-DUO.md](SPARK-DUO.md), validé sur les deux Spark le 09/11/2026. En bref, dans le dossier duo, seuls `.env` et `.env.vllm` diffèrent :
+
+| Réglage | Dossier 1 Spark | Dossier duo, Spark 1 | Dossier duo, Spark 2 |
+|---|---|---|---|
+| Branche | `spark` | `spark-duo` | `spark-duo` |
+| `COMPOSE_FILE` | `docker-compose.yml:docker-compose.spark.yml` | `…:docker-compose.spark-duo.yml` ajouté | `docker-compose.spark-worker.yml` |
+| `WS_DIR` | chemin absolu des données | **le même chemin absolu** | celui du Spark 2 (son compte de service, son chemin) |
+| `VLLM_IMAGE` | celle du profil | une image **avec Ray** (`eugr/spark-vllm`) | la même |
+| `VLLM_GPU_UTIL` | celle du profil (0.74) | **0.68** | la même |
+| `VLLM_API_KEY` | vide | une clé | la même clé |
+| `DUO_*` (interface, carte, IP **du câble**) | absents | remplis | identiques au Spark 1 |
+| Secrets, `.env.vllm` | les vôtres | copiés à l'identique | copiés à l'identique |
+
+Un seul des deux dossiers tourne à la fois : `docker compose down` dans l'un avant `docker compose up -d` dans l'autre (mêmes ports, mêmes bases de données).

@@ -11,11 +11,11 @@
       "models": {
         "qwen-local": {
           "name": "Modèle local (qwen-local)",
-          "limit": { "context": __CONTEXTE__, "output": 4096 }
+          "limit": { "context": __CONTEXTE__, "output": 32768 }
         },
         "normes": {
           "name": "Modèle + LoRA normes (après fine-tuning)",
-          "limit": { "context": __CONTEXTE__, "output": 4096 }
+          "limit": { "context": __CONTEXTE__, "output": 32768 }
         }
       }
     }

@@ -37,8 +37,6 @@ L'agent de code tourne **sur le poste du développeur** : il lit et modifie tes 
 | **MCP docs-internes** | Serveur d'outils pour les agents. Son outil principal, `rechercher_docs`, cherche dans les normes. | 9901 |
 | **Open WebUI** | Chat dans le navigateur, avec un compte par personne et l'historique des conversations. | 3000 |
 | **OpenCode** | Agent de code dans le terminal, l'équivalent local de Claude Code. **C'est l'outil principal pour coder.** | sur le poste |
-| **Agent NAT** | Agent NVIDIA (NeMo Agent Toolkit) configuré en YAML. Utile pour automatiser une tâche précise. | sur le serveur |
-| **NemoClaw** | Agent NVIDIA isolé dans un sandbox. Réservé aux agents autonomes, voir la section 6. | sur le serveur |
 | **Panneau web** | Démarre et arrête les services, affiche leur état et rappelle les commandes. | 7000 (local) |
 
 ### Le chemin d'une question sur les normes
@@ -69,7 +67,7 @@ L'agent de code tourne **sur le poste du développeur** : il lit et modifie tes 
 | `bge-m3` | Modèle d'embeddings pour la recherche dans les documents. Il ne sait pas discuter. | TEI, CPU |
 | reranker `bge-reranker-v2-m3` | Trie les passages trouvés par pertinence. Il n'est pas exposé aux clients. | TEI, CPU |
 
-Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` peut changer (un 4B aujourd'hui, un 35B sur le Spark) sans rien modifier chez les utilisateurs.
+Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` peut changer (un Qwen 4B sur le PC de test, Nemotron 3.5 Super 120B sur le Spark) sans rien modifier chez les utilisateurs. Le nom `qwen-local` est historique : il ne désigne pas forcément un modèle Qwen.
 
 ### Changer de modèle
 
@@ -77,7 +75,7 @@ Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` p
 2. Dans `.env`, règle :
    - `VLLM_MODEL=<dossier>` ;
    - `VLLM_MAX_MODEL_LEN`, la taille de contexte ;
-   - `VLLM_TOOL_PARSER`, le format d'appels d'outils de la famille du modèle (`hermes` ou `qwen3_coder`) ;
+   - `VLLM_TOOL_PARSER`, le format d'appels d'outils de la famille du modèle (`hermes` pour Qwen3-4B, `qwen3_xml` pour Qwen3.6 et 3.8, d'après NVIDIA) ;
    - `VLLM_EXTRA_ARGS`, les options propres au modèle.
 3. Redémarre vLLM : bouton **Redémarrer** sur la carte `vllm` du panneau, ou `docker compose up -d vllm`.
 4. Vérifie dans les logs qu'il démarre, et note la ligne `GPU KV cache size`.
@@ -87,6 +85,8 @@ Les clients ne voient que des **noms**. Le vrai modèle derrière `qwen-local` p
 - **Qwen3.5-4B AWQ :** 64K de contexte, un jeu complet et testé du premier coup. C'est le modèle retenu.
 
 L'ancien modèle reste dans `models/` (13 Go). Tu peux supprimer ses deux dossiers si tu as besoin de place.
+
+**Sur le Spark**, ne règle pas ces variables à la main : utilise les profils de modèles (section 8, « Tester d'autres modèles »).
 
 ---
 
@@ -108,7 +108,6 @@ Lance-le, puis ouvre http://localhost:7000 :
   - *Tout arrêter*.
 - **Une carte par service :** son état, sa RAM et son CPU, et les boutons Démarrer, Arrêter, Redémarrer, Logs et Ouvrir.
 - **Jauges :** l'occupation du GPU et de la RAM.
-- **NemoClaw :** démarrer ou arrêter le sandbox.
 
 Le panneau n'est accessible que depuis le PC lui-même.
 
@@ -224,6 +223,8 @@ Exemple réel sur le PC de test (projet `~/projets/jeu-test`) :
 
 OpenCode a accès à l'outil `rechercher_docs`. Le fichier `AGENTS.md` lui demande de s'en servir dès qu'une question touche une norme. Tu peux aussi le demander explicitement : « Cherche dans nos normes ce qui concerne la journalisation, puis vérifie si `jeu.py` les respecte ».
 
+Chaque réponse se termine par une section **Sources** : une ligne par extrait cité, avec un lien. Pour un PDF, le lien ouvre le document directement à la bonne page (`…/docs/norme.pdf#page=12`) ; pour les autres formats, il ouvre l'extrait utilisé. Dans le terminal, Ctrl+clic (Cmd+clic sur Mac) sur le lien l'ouvre dans le navigateur.
+
 Pour voir les recherches qu'il fait réellement :
 
 ```bash
@@ -234,21 +235,35 @@ docker compose logs -f mcp-docs
 
 ## 5. Les normes et documents internes (RAG)
 
-1. **Ajoute tes documents.** Dépose les fichiers (PDF, DOCX, MD, TXT) dans `docs-internes/`. Les sous-dossiers sont acceptés.
-2. **Lance l'indexation.** Le mode agent doit tourner. Seuls les fichiers nouveaux ou modifiés sont traités :
+1. **Ajoute tes documents.** Dépose les fichiers (PDF, DOCX, MD, TXT) dans `docs-internes/` (sur le Spark : `WS_DIR/docs-internes/`, ou le dossier choisi par `DOCS_DIR` dans `.env`). Les sous-dossiers sont acceptés.
+2. **Lance l'indexation.** Depuis le panneau : section **Documents**, bouton **Indexer les nouveautés** (journal en direct, `mcp-docs` redémarré à la fin, ce qui rend l'étape 3 inutile). Ou en ligne de commande, le mode agent devant tourner. Seuls les fichiers nouveaux ou modifiés sont traités :
    ```bash
    docker compose exec mcp-docs python ingest.py
    ```
-3. **Pour tout réindexer** (par exemple après avoir supprimé des fichiers) :
+3. **Redémarre le serveur MCP** quand tu as ajouté ou renommé des fichiers : la liste des documents, que le modèle lit pour décider de chercher, n'est construite qu'au démarrage.
+   ```bash
+   docker compose restart mcp-docs
+   ```
+4. **Pour tout réindexer** (par exemple après avoir supprimé des fichiers) :
    ```bash
    docker compose exec mcp-docs python ingest.py --reset
    ```
-4. **Vérifie ce qui est trouvé** pour une question :
+5. **Vérifie ce qui est trouvé** pour une question :
    ```bash
    docker compose exec mcp-docs python -c "from server import rechercher_docs; print(rechercher_docs('ma question', 3))"
    ```
 
-Les documents sont découpés en morceaux d'environ 1 200 caractères. Les PDF scannés (des images, sans texte) ne sont pas lisibles et devront d'abord passer par une reconnaissance de caractères (OCR).
+Les documents sont découpés en morceaux d'environ 1 200 caractères.
+
+**Tableaux et images.**
+- Les **tableaux Word** sont convertis en tableaux Markdown, à leur place dans le texte. Un long tableau est coupé en blocs qui répètent la ligne d'en-tête : chaque morceau garde le nom des colonnes.
+- Les **tableaux PDF « texte »** (sélectionnables à la souris) sont lus comme du texte : le contenu est trouvé, mais la mise en colonnes est perdue.
+- Les **images** (PDF et Word : tableau en image, schéma, capture, page scannée) sont transcrites par le LLM actif, s'il lit les images. C'est le cas du modèle par défaut, Nemotron 3.5 Super **VL**. Le texte obtenu (tableau Markdown, description de schéma, texte de la page) est indexé à la page de l'image et cité comme le reste. Les petites images (moins de 100 pixels de côté : icônes, puces), les images répétées (logo d'en-tête) et celles que le modèle juge décoratives sont ignorées.
+- **Durée :** quelques secondes par image (environ 50 jetons/s). Pendant ce temps l'indexation occupe une des 8 places de génération de vLLM : pour une grosse norme pleine de figures, lance-la plutôt hors des heures de travail.
+- **Modèle sans vision** (Lightning, Qwen…) : les images sont comptées « en attente » et le texte est indexé quand même. Au prochain `ingest.py` lancé avec un modèle vision, les documents concernés sont repris automatiquement. `--sans-images` force ce comportement (pour ne pas solliciter le LLM).
+- Les lignes `!` signalent ce qui n'a pas été lu : image non décodée, page sans texte, transcription tronquée.
+
+Après la mise à jour qui a ajouté la lecture des images, reconstruis le conteneur (`docker compose up -d --build mcp-docs`). Le premier `ingest.py` réindexe alors tous les documents une fois, images comprises.
 
 Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies normes.
 
@@ -260,70 +275,22 @@ Le fichier `NORME-DEV-001` est un **exemple fictif**. Remplace-le par tes vraies
 
 1. Lance le *Mode chat* depuis le panneau, puis ouvre http://localhost:3000.
 2. Crée ton compte. Le premier compte créé devient administrateur.
-3. Pour que le chat puisse chercher dans les normes : Réglages admin → Outils externes → ajoute le serveur MCP `http://mcp-docs:9901/mcp`.
-
-### Agent NVIDIA NAT
-
-C'est un agent défini en YAML dans `agent/config.yml`. Il travaille sur le dossier `workspace/` du serveur, avec les outils du serveur MCP. Il est utile pour une tâche automatisée et répétable. Pour coder sur ton propre projet, préfère OpenCode.
-
-```bash
-. ~/.config/ia-locale/env
-NAT_API_KEY=$LITELLM_API_KEY .venv/bin/nat run --config_file agent/config.yml --input "Que dit la norme sur les tests ?"
-```
-
-### NemoClaw (agent NVIDIA isolé)
-
-NemoClaw enferme un agent dans un sandbox : réseau filtré, accès disque limité, copie du projet. **Ce n'est pas l'outil pour coder au quotidien**, car il faut envoyer le projet, puis récupérer un patch. Il sera utile sur le Spark pour des agents autonomes, comme une revue de code automatique ou des tâches de nuit.
-
-Le sandbox `patate` est installé et **arrêté**. Pour le démarrer :
-
-```bash
-nemo-deepagents patate start
-```
-
-Ensuite, deux façons d'utiliser l'agent :
-- **en chat**, dans le terminal :
-  ```bash
-  nemo-deepagents launch patate
-  ```
-- **avec une tâche précise**, sans interaction :
-  ```bash
-  nemo-deepagents patate exec --workdir /sandbox -- dcode -n "<tâche>"
-  ```
-
-Pour faire passer des fichiers entre le PC et le sandbox :
-
-```bash
-nemo-deepagents patate upload <fichier-ou-dossier> /sandbox
-nemo-deepagents patate download /sandbox/<chemin> <destination>
-```
-
-Pour l'arrêter :
-
-```bash
-nemo-deepagents patate stop
-```
-
-Le bouton du panneau fait la même chose. Après un changement de modèle, il n'y a rien à refaire : NemoClaw utilise toujours le nom `qwen-local`.
-
-### Entraîner le modèle sur les normes (LoRA)
-
-Ce n'est **pas encore fait**, et c'est à faire une fois tes vraies normes indexées.
-
-> Le fine-tuning apprend au modèle le **style et le vocabulaire** des normes. Il ne lui fait pas retenir les règles exactes de façon fiable. **La source de vérité reste la recherche dans les documents.** Le mieux est de combiner les deux.
-
-1. **Télécharge le modèle de base** en pleine précision (`models/Qwen3.5-4B`, ~9 Go). Le script `./scripts/01-telecharger-modeles.sh` le fait.
-2. **Génère le jeu de questions/réponses** à partir des documents indexés, puis relis-en un échantillon :
+3. La recherche dans les normes (`docs-internes`) est déclarée d'office et ouverte à tous les comptes. Sur une installation antérieure à ce réglage, elle n'est visible que des admins : l'ouvrir à tous avec
    ```bash
-   source .env && docker compose exec -e LITELLM_KEY=$LITELLM_MASTER_KEY mcp-docs python /finetune/generer_dataset.py
+   docker compose exec open-webui python3 -c "
+   import sqlite3, json
+   db = sqlite3.connect('/app/backend/data/webui.db')
+   (v,) = db.execute(\"select value from config where key='tool_server.connections'\").fetchone()
+   conns = json.loads(v)
+   for c in conns:
+       if (c.get('info') or {}).get('id') == 'docs-internes':
+           c.setdefault('config', {})['access_grants'] = [{'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}]
+   db.execute(\"update config set value=? where key='tool_server.connections'\", (json.dumps(conns),))
+   db.commit()
+   "
+   docker compose restart open-webui
    ```
-3. **Passe en *Mode fine-tuning*** depuis le panneau, pour libérer le GPU.
-4. **Lance l'entraînement :**
-   ```bash
-   python3 -m venv .venv-finetune && .venv-finetune/bin/pip install -r finetune/requirements.txt
-   .venv-finetune/bin/python finetune/entrainer_lora.py
-   ```
-5. **Active l'adaptateur.** Dans `.env`, décommente la ligne `VLLM_LORA_ARGS=…`, puis redémarre vLLM. Le modèle `normes` devient disponible dans OpenCode, avec `/models`.
+4. **Sources cliquables (admin, une fois).** Installe le filtre `services/open-webui/filtre_sources.py` : *Panneau d'administration > Fonctions > +*, colle le contenu du fichier, enregistre, puis active la fonction et rends-la **Globale** (menu ⋯). Les références `[a1b2c3d4]` des réponses deviennent des liens numérotés `[1]`, `[2]`… suivis de la liste des sources. Un clic ouvre, dans un nouvel onglet, le PDF à la bonne page (ou l'extrait pour un Word ou un texte) ; le lien « extrait » à côté montre le passage exact utilisé. Après une mise à jour du fichier, recolle-le à la place de l'ancien.
 
 ---
 
@@ -339,33 +306,44 @@ Ce n'est **pas encore fait**, et c'est à faire une fois tes vraies normes index
 ## 8. Passage au DGX Spark
 
 > Les fichiers sont prêts, mais **pas encore testés sur le Spark**. Les points marqués ⚠ sont à vérifier sur place.
+>
+> **Pas à pas complet, de la copie du projet à la vérification, avec les pannes probables : [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md).** Les étapes ci-dessous en sont le résumé.
 
 ### Côté serveur (sur le Spark)
 
-1. **Copie le projet** sur le Spark : tout le dossier, sauf `models/`, `.venv*` et `.env`.
-2. **Télécharge les modèles du Spark** (~30 Go), avec internet ou depuis un disque de transfert :
+1. **Clone le projet** sur le Spark dans `/home/admin_spark4c7c/data/ws/ia-locale` (`git clone -b spark …`, voir le pas-à-pas ; Docker est déjà installé et configuré, `./scripts/00-prerequis.sh` ne fait que vérifier), puis copie à part les PDF des normes dans le dossier de données (`WS_DIR/docs-internes/`) : ils ne sont pas dans git.
+2. **Prépare la configuration :**
+   ```bash
+   ./scripts/preparer-env-spark.sh spark1.lan /home/admin_spark4c7c/data/ws
+   ```
+   Le script génère les secrets, crée les dossiers de données (`WS_DIR`, par exemple `/home/admin_spark4c7c/data/ws`) (la clé maître LiteLLM doit commencer par `sk-`), fixe `SPARK_HOSTNAME` et crée `MCP_TOKEN`. Le `.env` obtenu contient `COMPOSE_FILE`, qui fait utiliser la config Spark à toutes les commandes `docker compose` et au panneau web.
+3. **Télécharge les modèles du Spark** (~82 Go, dans `WS_DIR/models`), avec internet ou depuis un disque de transfert :
    ```bash
    ./scripts/01-telecharger-modeles.sh --spark
    ```
-3. **Prépare la configuration :**
-   ```bash
-   cp .env.spark.example .env
-   ```
-   Puis remplis les secrets (générés avec `openssl rand -hex 16`), `SPARK_HOSTNAME` et `MCP_TOKEN`. ⚠ Vérifie le parser d'outils recommandé pour Qwen3.6 sur recipes.vllm.ai.
 4. **Démarre la stack :**
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.spark.yml up -d
+   docker compose up -d
    ```
-5. **Vérifie** que vLLM charge le modèle de 35B : il démarre en plusieurs minutes, et la commande `docker compose logs -f vllm` montre sa progression.
-6. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes :
+   Le panneau web (`./scripts/panneau.sh`) écoute sur `127.0.0.1:7000` du Spark. Depuis ton poste : `ssh -L 7000:localhost:7000 <utilisateur>@<spark>`, puis http://localhost:7000.
+5. **Attends que vLLM ait chargé le modèle de 120B (75 Go).** Ça prend 15 à 30 minutes la première fois, et la commande `docker compose logs -f vllm` montre la progression.
+6. **Vérifie que tout répond** : chat, appels d'outils, débit, embeddings et reranker.
+   ```bash
+   ./scripts/02-verifier-spark.sh
+   ```
+   Attendu : 5 lignes OK. Le débit doit être nettement au-dessus de celui du PC (45 tok/s) : NVIDIA mesure 51 tok/s pour ce modèle sur Spark, pour une seule requête de code (le script en mesure une aussi, avec le préremplissage compté, donc un peu moins). Si une ligne échoue, voir la section 9.
+7. **Crée tout de suite le compte admin d'Open WebUI** : ouvre `https://<SPARK_HOSTNAME>:8443` et inscris-toi. **Le premier compte créé devient administrateur**, et la page est joignable par tout le réseau, donc fais-le avant d'annoncer le serveur à l'équipe. Ajoute ensuite le MCP des normes (section 6).
+8. **Récupère le certificat HTTPS interne de Caddy**, à distribuer aux postes (le navigateur affiche sinon un avertissement) :
    ```bash
    docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./spark-ca.crt
    ```
 
 Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
-- **Modèle :** `Qwen3.6-35B-A3B` NVFP4 (profil recommandé par NVIDIA), avec 128K de contexte et 8 requêtes en parallèle.
-- **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64. ⚠ À valider.
-- **Accès réseau :** seul **Caddy** (HTTPS, port 443) est joignable depuis le réseau. LiteLLM est servi sur `/`, la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Tout le reste n'écoute qu'en local.
+- **Modèle :** `Nemotron 3.5 Super VL 120B-A12B` NVFP4 (NVIDIA, sorti le 15/10/2026), le plus gros Nemotron 3.5 qui tient sur un Spark 128 Go. Texte et images, 262 144 jetons de contexte, 8 requêtes en parallèle. Le Spark n'a pas à ressembler au PC de test : il prend le meilleur modèle qu'il peut porter.
+- **Réglages vLLM :** ceux de la **recette officielle NVIDIA** du modèle (dépôt [local-ai-inference-recipes](https://github.com/NVIDIA/local-ai-inference-recipes), validée le 15/10/2026 sur un Spark avec le pilote 580 et CUDA 13.0). Un profil par modèle dans `config/modeles-spark/`. Le conteneur reçoit aussi les réglages que NVIDIA met dans toutes ses recettes : mémoire partagée de 16 Go, mémoire verrouillée illimitée, caches de compilation conservés dans `WS_DIR/cache/` (démarrages suivants plus rapides).
+- **Image vLLM :** `eugr/spark-vllm:nightly-20261015` (image communautaire ARM64 que cite la recette NVIDIA, tag figé) pour le modèle par défaut. Réglable avec `VLLM_IMAGE` ; chaque profil indique l'image de sa recette. Le panneau web affiche la mémoire unifiée du Spark via la jauge RAM.
+- **Embeddings et reranker :** servis par vLLM sur le GPU, car TEI n'existe pas pour ARM64.
+- **Accès réseau :** seul **Caddy** (HTTPS) est joignable depuis le réseau. Port 443 : LiteLLM sur `/` (pour OpenCode) et la recherche dans les normes sur `/mcp`, protégée par le jeton d'équipe. Port 8443 : **Open WebUI**, le chat web, à ouvrir sur `https://<SPARK_HOSTNAME>:8443`. Tout le reste n'écoute qu'en local.
 - **Serveur MCP :** il n'expose que `rechercher_docs` (`OUTILS_CODE=0`). Les outils fichiers et commandes ne doivent jamais être joignables par le réseau.
 
 ### Côté postes (chaque développeur)
@@ -376,16 +354,87 @@ Ce que la surcharge `docker-compose.spark.yml` change par rapport au PC :
    ```
 2. **Lance l'installation sur son poste**, avec l'adresse du Spark :
    ```bash
-   ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 131072 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
+   ./scripts/installer-opencode.sh --serveur https://spark1.lan --contexte 262144 --mcp https://spark1.lan/mcp --jeton-mcp <jeton> --ca ./spark-ca.crt
    ```
 
 C'est la seule différence avec le PC de test : `opencode` s'utilise exactement de la même façon.
 
+### Tester d'autres modèles
+
+Chaque modèle a besoin de ses propres réglages (image vLLM, format d'appels d'outils, options). Ils sont rangés dans un **profil** par modèle, dans `config/modeles-spark/`. Le script `scripts/modeles.py` lit les recettes officielles de [recipes.vllm.ai](https://recipes.vllm.ai) (filtre « DGX Spark ») pour les créer, donc rien n'est à recopier à la main.
+
+```bash
+./scripts/modeles.py lister                      # profils connus, téléchargés ou non, modèle actif
+./scripts/modeles.py chercher nvidia             # modèles dont la recette est vérifiée pour le Spark (filtre facultatif)
+./scripts/modeles.py ajouter nvidia/Qwen3.8-27B-NVFP4   # crée le profil d'un modèle de la liste
+./scripts/modeles.py utiliser qwen3.8-27b-nvfp4  # télécharge si besoin, met .env à jour, redémarre vLLM
+./scripts/02-verifier-spark.sh                   # teste chat, outils, débit
+```
+
+Pour comparer deux modèles : `utiliser` le premier, lance `02-verifier-spark.sh` et note le débit, puis fais pareil avec le second. Les clients n'ont rien à changer, le nom reste `qwen-local`.
+
+Profils fournis (liste revue le 21/10/2026 d'après Hugging Face, alignée sur les recettes officielles NVIDIA). « Débit » = génération de code, une seule requête, mesuré par NVIDIA sur un DGX Spark :
+
+| Profil | Type | Mémoire | Débit | À savoir |
+|---|---|---|---|---|
+| `nemotron-3.5-lightning-30b-a3b-nvfp4` | MoE, 3 Md actifs | 18 Go | 144 tok/s | Le plus rapide. Image communautaire figée, brouillon DSpark |
+| `qwen3.6-35b-a3b-nvfp4` | MoE, 3 Md actifs | 21 Go | 124 tok/s | Ancien modèle par défaut : rapide, repli si Nemotron Super pose problème. Conteneur NGC de NVIDIA |
+| `bolt-74b-a9b-24gb` | MoE hybride, 9 Md actifs, 74 Md au total | 24 Go | 89 tok/s | Conçu pour les agents locaux. Image communautaire figée, brouillon LiLiCorr |
+| `qwen3.6-35b-a3b-fp8` | MoE, 3 Md actifs | 42 Go | non mesuré | Version 8 bits de Qwen3.6 : plus fidèle, un peu plus lente |
+| `ornith-1.5-122b-nvfp4` | MoE, 122 Md | ~70 Go | non mesuré | **Expérimental** : publié le 20/10, scores annoncés par l'éditeur, aucune validation Spark. Licence MIT |
+| `nemotron-3.5-super-vl-120b-a12b-nvfp4` | MoE, 120 Md, 12 Md actifs | 75 Go | 51 tok/s | **Modèle par défaut.** Le plus capable. Texte et images. Image communautaire figée, brouillon LiLiCorr. Prend l'essentiel de la mémoire |
+| `qwen3.8-flash-next-fp4-local` | MoE, 125 Md au total, 6 Md actifs | ~100 Go | 38 tok/s | **Pour viser ~90 % de la mémoire.** Image communautaire figée et conteneur moins isolé exigés par la recette |
+| `qwen3.8-27b-nvfp4` | Dense, 27 Md | 32 Go | 37 tok/s | Modèle recommandé par le playbook NVIDIA vLLM. Conteneur NGC, brouillon DFlash |
+
+**Remplir la mémoire ne rend pas plus rapide** : les modèles de 75 à 100 Go, dont le modèle par défaut, sont environ 3 fois plus lents que les MoE à 3 Md actifs (Lightning, Qwen3.6). Ils répondent mieux, mais moins vite. À plusieurs utilisateurs, le débit par personne baisse encore.
+
+Écartés après examen : DeepSeek V4.1 Flash (765 Go), GLM-5.3 (328 Go au minimum) et Kimi K3 (2,8 To) ne tiennent pas sur un Spark ; Mistral Medium 3.5 128B est un modèle dense (environ 90 Go lus à chaque mot, donc très lent) ; Kolibri 1 ne gère que l'allemand et l'anglais ; Step 3.7 Flash (117 Go) ne laisse pas de marge.
+
+**Utiliser ~90 % de la mémoire.** Les recettes NVIDIA réservent 0.8 pour vLLM (`VLLM_GPU_UTIL`), mais avec le modèle seul. Ici, la pile complète (système, embeddings et reranker, Open WebUI, bases) occupe déjà ~30 Gio au démarrage de vLLM : les profils réservent donc 0.74 (mesuré sur le Spark, 0.8 refuse de démarrer). Un seul gros modèle à la fois, et rien d'autre de lourd sur le GPU. Autres gros modèles à comparer avec le modèle par défaut : `qwen3.8-flash-next…`, puis `ornith…` (le plus récent et le moins validé). Compare chacun avec `02-verifier-spark.sh` et sur tes vraies tâches.
+
+Où trouver d'autres modèles :
+- **`chercher`** : la source la plus fiable, car chaque modèle listé a une recette de réglages testée sur le GB10.
+- **`nouveautes`** : les derniers modèles publiés sur Hugging Face par un auteur (`./scripts/modeles.py nouveautes nvidia`). Un modèle de la semaine n'a souvent pas encore de recette : le profil se rédige alors à la main d'après sa fiche (modèle : `bolt-74b-a9b-24gb.env`).
+- **Hugging Face** : les modèles NVIDIA au format NVFP4 sont dans l'organisation [nvidia](https://huggingface.co/nvidia). Un modèle qui n'a pas de recette GB10 n'est pas refusé, mais ses réglages sont à trouver à la main.
+- **NVIDIA** : les [playbooks du Spark](https://build.nvidia.com/spark) et le forum développeurs annoncent les modèles validés.
+
+Règles utiles :
+- **Jusqu'où monter :** les 128 Go sont partagés avec le système, les services Docker et les embeddings (environ 10 Go). Un modèle jusqu'à ~85 Go de « mémoire min. » est réaliste. Au-delà (DeepSeek V4, 170 Go) il faut deux Spark.
+- **Plus gros n'est pas plus rapide.** À chaque mot généré, le Spark relit les paramètres actifs en mémoire, et sa bande passante (environ 270 Go/s, ordre de grandeur) limite la vitesse. Un MoE à 3 Md actifs génère donc bien plus vite qu'un modèle de 120 Md à 12 Md actifs, et un modèle dense de 27 Md est encore plus lent.
+- **Ce que la mémoire en plus apporte :** soit un modèle plus capable (120 Md en 4 bits), soit le même modèle en meilleure précision (8 bits au lieu de 4). Compare avec `02-verifier-spark.sh` et sur tes vraies tâches, pas seulement sur la taille.
+
+Les poids se téléchargent avec internet, puis tout tourne hors ligne. Une LoRA entraînée sur un modèle ne fonctionne pas avec un autre : réentraîne-la après un changement.
+
 ### Plus tard
 
-- **Deuxième Spark :** décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`. LiteLLM répartit alors la charge entre les deux.
+- **Deuxième Spark :** deux façons de s'en servir, détaillées dans [SPARK-DUO.md](SPARK-DUO.md). Soit un modèle complet sur chaque Spark (décommente la deuxième entrée `qwen-local` dans `config/litellm.yaml`, LiteLLM répartit la charge), soit un seul modèle plus gros réparti sur les deux, reliés par le câble QSFP.
+- **Serveur annexe :** LiteLLM, Open WebUI, embeddings, bases et MCP peuvent tourner sur une machine x86 sans GPU, pour rendre 15 à 20 Go de mémoire au modèle (annexe de [SPARK-DUO.md](SPARK-DUO.md), mise de côté et non testée).
 - **Réseau fermé :** prévois un miroir du paquet npm `opencode-ai`, de ripgrep et des images Docker. Les variables `OPENCODE_DISABLE_*` sont déjà posées par le script d'installation.
-- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec le 35B.
+- **LoRA :** il faudra la réentraîner sur le modèle du Spark. Un adaptateur entraîné sur le 4B ne fonctionne pas avec Nemotron Super. Si vLLM refuse de démarrer avec la LoRA et le MTP ensemble, vide `VLLM_SPEC_ARGS`.
+
+### Comparer les modèles : journaux, métriques, évaluations
+
+Tout est conservé dans `WS_DIR` sur le Spark, en dehors des conteneurs (rien n'est perdu avec `docker compose down`).
+
+| Donnée | Où | Durée |
+|---|---|---|
+| Profil actif au fil du temps | `WS_DIR/logs/profils.jsonl` (`./scripts/modeles.py historique`) | illimitée |
+| Une ligne par requête LLM : heures, TTFT, jetons, clé (jamais le texte) | Postgres, table `LiteLLM_SpendLogs` | 1 an |
+| Recherches RAG : ids, scores, durées, références inventées | `WS_DIR/logs/rag/rag-AAAA-MM.jsonl` | illimitée (questions : empreinte seulement) |
+| Texte des questions RAG (si `RAG_LOG_QUESTIONS=texte`) | `WS_DIR/logs/rag/questions-AAAA-MM.jsonl` | `RAG_LOG_RETENTION_DAYS` (90 j) |
+| Accès HTTPS (statut, durée, client) | `WS_DIR/logs/caddy/{api,webui}.log` | 90 jours |
+| Métriques vLLM, GPU, machine, Qdrant | Prometheus, `WS_DIR/prometheus/data` | 1 an (20 Go max) |
+| Avis 👍/👎 | Open WebUI, `WS_DIR/open-webui/webui.db` | illimitée |
+| Évaluations fixes | `WS_DIR/evals/` | illimitée |
+
+- **Rapport par profil** (une colonne par modèle) :  `./scripts/rapport-modeles.py --depuis 2026-11-01`  (`--csv fichier.csv` pour un tableur).
+- **Évaluation fixe** : lancée à la fin de `./scripts/modeles.py utiliser <profil>` (`--sans-eval` pour la sauter), ou à la main avec `./scripts/evaluer.py`. Jeux dans `evals/` : **remplace les questions d'exemple de `evals/normes.jsonl` par des questions sur vos vraies normes** (faits attendus en regex, document source attendu). Le code produit par le modèle est testé dans un conteneur sans réseau.
+- **Prometheus** : `http://127.0.0.1:9090` sur le Spark (depuis un poste : `ssh -L 9090:127.0.0.1:9090 <compte>@<spark>`). Exemples :
+  - TTFT p95 par profil : `histogram_quantile(0.95, sum by (le, profil) (rate(vllm:time_to_first_token_seconds_bucket[5m])))`
+  - débit généré : `sum by (profil) (rate(vllm:generation_tokens_total[5m]))`
+  - puissance GPU : `gpu_puissance_watts` ; mémoire unifiée libre : `node_memory_MemAvailable_bytes`
+- Après la mise à jour, lance une fois `./scripts/modeles.py utiliser <profil actuel> --sans-eval` : cela crée la cible vLLM de Prometheus (avec le label `profil`) et la première ligne de l'historique.
+- **Vie privée** : pas de prompts dans LiteLLM, utilisateurs identifiés par l'empreinte de leur clé, rapports en agrégats seulement. Open WebUI garde en revanche les conversations complètes, lisibles par un administrateur : à signaler aux utilisateurs.
 
 ---
 
@@ -398,13 +447,14 @@ C'est la seule différence avec le PC de test : `opencode` s'utilise exactement 
 | vLLM : `invalid loads value` au démarrage | Les guillemets JSON de `VLLM_EXTRA_ARGS` ont été retirés | Entourer le JSON d'apostrophes : `'{"cle":valeur}'` |
 | vLLM : pas assez de mémoire pour le contexte | `VLLM_MAX_MODEL_LEN` trop grand pour la VRAM | Baisser `VLLM_MAX_MODEL_LEN` ou `VLLM_GPU_UTIL` dans `.env` |
 | Plus de RAM disponible, PC lent | TEI qui garde 10 à 15 Go par instance | Déjà corrigé (`MALLOC_ARENA_MAX`, lots réduits). Vérifier avec `docker stats` |
-| OpenCode ou NAT : `401` / clé refusée | Clé incomplète ou mal collée | `curl -s localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_API_KEY"`, puis recréer la clé et relancer `installer-opencode.sh` |
+| OpenCode : `401` / clé refusée | Clé incomplète ou mal collée | `curl -s localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_API_KEY"`, puis recréer la clé et relancer `installer-opencode.sh` |
 | `opencode : commande introuvable` | Terminal ouvert avant l'installation | `source ~/.bashrc` |
 | OpenCode en mode `run` : « permission requested… auto-rejecting » | Les modifications demandent ton accord, et il n'y a pas d'interface en mode `run` | Utiliser `opencode` (interactif), ou `--auto` sur un projet de test |
 | L'agent annonce « c'est fait » mais rien n'a changé | Petit modèle qui décrit au lieu d'agir | `git diff`, puis redemander en nommant le fichier. Suivre les outils appelés avec `docker compose logs -f mcp-docs` |
 | L'agent ne trouve rien dans les normes | Documents non indexés, ou mode agent arrêté | `docker compose exec mcp-docs python ingest.py`, et vérifier que `mcp-docs`, `qdrant` et `tei-*` sont en marche |
-| NemoClaw : `doctor` affiche `Inference route … 503` | La passerelle OpenShell ne joint pas vLLM | Vérifier que `OPENSHELL_BRIDGE_IP` (dans `.env`) correspond à `docker network inspect openshell-docker`, puis `docker compose up -d vllm` |
-| NemoClaw : pip bloqué (`403 Forbidden`) | Pare-feu du sandbox | Télécharger les paquets sur le poste, puis les installer hors ligne dans le sandbox (`pip download`, `upload`, `pip install --no-index`) |
+| Un tableau ou un schéma en image n'est pas trouvé | Image non transcrite : modèle sans vision, ou `ingest.py` lancé avant | Relancer `docker compose exec mcp-docs python ingest.py` avec le modèle par défaut (VL) : les images « en attente » sont reprises |
+| Spark : vLLM plante au démarrage, renvoie du texte incohérent, ou le débit est très bas | Noyaux GPU mal pris en charge sur GB10 par cette version de vLLM | Dans `.env`, vider `VLLM_SPEC_ARGS`, puis relancer avec `docker compose up -d vllm`. Si ça ne suffit pas : repli sur `./scripts/modeles.py utiliser qwen3.6-35b-a3b-nvfp4`. Les pannes probables sont détaillées dans [SPARK-PREMIER-DEMARRAGE.md](SPARK-PREMIER-DEMARRAGE.md), section 8 |
+| Spark : manque de mémoire alors qu'il en reste | Le cache disque n'est pas libéré (mémoire unifiée) | `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` |
 
 ---
 
@@ -416,12 +466,15 @@ C'est la seule différence avec le PC de test : `opencode` s'utilise exactement 
 IA locale/
 ├── GUIDE.md                    ce guide
 ├── README.md                   démarrage rapide
+├── SPARK-PREMIER-DEMARRAGE.md  pas à pas du premier démarrage sur le Spark
+├── AUDIT-NVIDIA.md             écarts avec les tutoriels et recettes NVIDIA
 ├── docker-compose.yml          la stack (PC de test)
 ├── docker-compose.spark.yml    surcharge pour le DGX Spark
 ├── .env / .env.example         réglages et secrets du PC (.env n'est jamais partagé)
 ├── .env.spark.example          réglages du Spark
 ├── config/
 │   ├── litellm.yaml            modèles exposés aux clients
+│   ├── modeles-spark/          un profil par modèle testable sur le Spark
 │   └── Caddyfile.spark         proxy HTTPS du Spark
 ├── models/                     poids des modèles (hors git)
 ├── docs-internes/              tes normes et documents (indexés pour la recherche)
@@ -429,14 +482,16 @@ IA locale/
 ├── clients/
 │   ├── opencode.json           modèle de config OpenCode (utilisé par le script d'installation)
 │   └── AGENTS.md               consignes de l'agent, à copier dans chaque projet
-├── agent/config.yml            agent NVIDIA NAT
 ├── finetune/                   génération du jeu d'entraînement et entraînement LoRA
 ├── loras/                      adaptateurs entraînés
-├── workspace/                  projet de test de l'agent NAT
 ├── panneau/                    panneau web (server.py, index.html)
 └── scripts/
-    ├── 00-prerequis.sh         driver, Docker, NVIDIA Container Toolkit (une fois, sudo)
+    ├── 00-prerequis.sh         PC : driver, NVIDIA Container Toolkit (une fois, sudo) ; Spark : vérifications seulement
     ├── 01-telecharger-modeles.sh   poids des modèles (--spark pour le Spark)
+    ├── 02-verifier-spark.sh    vérifie que chat, outils, embeddings et reranker répondent
+    ├── preparer-env-spark.sh   crée le .env du Spark (secrets générés)
+    ├── diagnostic-spark.sh     rassemble l'état du Spark dans un fichier à transmettre
+    ├── modeles.py              modèles du Spark : chercher, ajouter, utiliser (profils)
     ├── creer-cle-utilisateur.sh    clé LiteLLM pour une personne
     ├── installer-opencode.sh   OpenCode sur un poste
     └── panneau.sh              lance le panneau web
@@ -446,11 +501,11 @@ IA locale/
 
 | Port | Service | Accessible depuis |
 |---|---|---|
-| 3000 | Open WebUI | ce PC |
+| 3000 | Open WebUI | ce PC (le Spark : via Caddy, port 8443) |
 | 4000 | LiteLLM (API des modèles et interface d'admin `/ui`) | ce PC (le Spark : via Caddy en 443) |
 | 6333 | Qdrant (tableau de bord : `/dashboard`) | ce PC |
 | 7000 | Panneau web | ce PC |
-| 8000 | vLLM | ce PC, et le sandbox NemoClaw |
+| 8000 | vLLM | ce PC |
 | 9901 | MCP docs-internes | ce PC (le Spark : via Caddy, `/mcp`) |
 
 ### Variables de `.env`
@@ -466,9 +521,14 @@ IA locale/
 | `VLLM_TOOL_PARSER` | Format des appels d'outils du modèle |
 | `VLLM_EXTRA_ARGS` | Options vLLM propres au modèle |
 | `VLLM_LORA_ARGS` | Active l'adaptateur `normes` (vide tant qu'il n'est pas entraîné) |
-| `MCP_OUTILS_CODE` | 1 : outils fichiers/commandes (agent NAT local). 0 : seulement la recherche dans les normes |
-| `OPENSHELL_BRIDGE_IP` | Adresse du pont NemoClaw (vide si NemoClaw est absent) |
+| `WS_DIR` | Spark uniquement : dossier des données des conteneurs (modèles, caches, bases, documents) |
+| `DOCS_DIR` | Spark uniquement : dossier des normes indexées (défaut `WS_DIR/docs-internes`). `./docs-internes` = le dossier du projet |
+| `VLLM_IMAGE` | Spark uniquement : image Docker de vLLM |
+| `VLLM_SPEC_ARGS` | Spark uniquement : décodage spéculatif MTP (vide pour le désactiver) |
+| `MCP_OUTILS_CODE` | 0 (défaut) : seulement la recherche dans les normes. 1 : ajoute des outils fichiers/commandes sur `workspace/` |
 | `SPARK_HOSTNAME`, `MCP_TOKEN` | Spark uniquement : nom du serveur et jeton d'équipe pour les normes |
+| `VLLM_API_KEY`, `VLLM_ECOUTE`, `VLLM_API_BASE` | vLLM joignable par le réseau (serveur annexe, duo) : clé, interface d'écoute, adresse vue par LiteLLM. Voir SPARK-DUO.md |
+| `DUO_*` | Duo de Spark : interface et carte du câble, adresses des deux Spark. Voir SPARK-DUO.md |
 
 ### Fichiers sur chaque poste (créés par `installer-opencode.sh`)
 

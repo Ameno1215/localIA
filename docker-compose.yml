@@ -1,12 +1,16 @@
 # Stack IA locale — identique (à la taille du modèle près) à ce qui tournera sur le DGX Spark.
 #
 #   Open WebUI (3000) ─┐
-#   OpenCode / IDE ────┼─> LiteLLM (4000) ─> vLLM (8000, GPU)       <- LLM + LoRA "normes"
-#   Agent NVIDIA NAT ──┘        │
+#   OpenCode / IDE ────┴─> LiteLLM (4000) ─> vLLM (8000, GPU)       <- LLM + LoRA "normes"
 #        │                      └─> TEI embeddings (CPU)
 #        └──> MCP docs-internes (9901) ─> Qdrant (6333) + TEI embed/rerank (CPU)
 #
 # Sur le Spark (arm64) : mêmes services, images aarch64, modèle plus gros.
+
+# Journaux Docker bornés (sinon ils grossissent sans limite) : 5 x 50 Mo par service
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
 
 x-offline: &offline
   HF_HUB_OFFLINE: "1"
@@ -20,6 +24,7 @@ x-tei: &tei
     MALLOC_ARENA_MAX: "2"
     OMP_NUM_THREADS: "4"
   volumes: ["./models:/models:ro"]
+  logging: *logs
   restart: unless-stopped
 
 services:
@@ -45,9 +50,6 @@ services:
       - ./loras:/loras:ro
     ports:
       - "127.0.0.1:8000:8000"
-      # Pont réseau OpenShell (NemoClaw) : la passerelle joint vLLM via host.openshell.internal.
-      # Visible seulement de la machine et du sandbox. 127.0.0.2 (inutilisé) si NemoClaw absent.
-      - "${OPENSHELL_BRIDGE_IP:-127.0.0.2}:8000:8000"
     ipc: host
     deploy:
       resources:
@@ -57,6 +59,7 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 15s
       retries: 40
+    logging: *logs
     restart: unless-stopped
 
   # Embeddings + reranker sur CPU : la VRAM reste pour le LLM
@@ -72,10 +75,10 @@ services:
     image: qdrant/qdrant:v1.19.2
     volumes: ["qdrant:/qdrant/storage"]
     ports: ["127.0.0.1:6333:6333"]
+    logging: *logs
     restart: unless-stopped
 
-  # Serveur MCP maison : recherche dans les normes/docs + outils fichiers sur ./workspace
-  # Utilisé par l'agent NVIDIA (NAT), OpenCode et Open WebUI.
+  # Serveur MCP maison : recherche dans les normes/docs. Utilisé par OpenCode et Open WebUI.
   mcp-docs:
     build: ./services/mcp-docs
     environment:
@@ -84,7 +87,10 @@ services:
       RERANK_URL: http://tei-rerank
       COLLECTION: docs_internes
       WORKSPACE: /workspace
-      OUTILS_CODE: ${MCP_OUTILS_CODE:-1}
+      OUTILS_CODE: ${MCP_OUTILS_CODE:-0}
+      # Transcription des images à l'indexation, par le LLM (sur un autre serveur : voir SPARK-DUO.md)
+      VISION_URL: ${VLLM_API_BASE:-http://vllm:8000/v1}
+      VISION_API_KEY: ${VLLM_API_KEY:-}
     volumes:
       - ./docs-internes:/docs:ro
       - ./workspace:/workspace
@@ -92,6 +98,7 @@ services:
       - ./data:/data
     ports: ["127.0.0.1:9901:9901"]
     depends_on: [qdrant, tei-embed, tei-rerank]
+    logging: *logs
     restart: unless-stopped
 
   # Passerelle multi-utilisateurs : une clé API par personne, quotas, logs, routage
@@ -102,9 +109,13 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
       STORE_MODEL_IN_DB: "False"
+      # Adresse et clé de vLLM, lues par config/litellm.yaml (vLLM sur une autre machine : voir SPARK-DUO.md)
+      VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm:8000/v1}
+      VLLM_API_KEY: ${VLLM_API_KEY:-none}
     volumes: ["./config/litellm.yaml:/app/config.yaml:ro"]
     ports: ["127.0.0.1:4000:4000"]
     depends_on: [postgres]
+    logging: *logs
     restart: unless-stopped
 
   postgres:
@@ -114,6 +125,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: litellm
     volumes: ["postgres:/var/lib/postgresql/data"]
+    logging: *logs
     restart: unless-stopped
 
   # Interface web : comptes utilisateurs, historique, RAG sur documents déposés
@@ -133,11 +145,13 @@ services:
       RAG_EMBEDDING_MODEL: bge-m3
       RAG_OPENAI_API_BASE_URL: http://litellm:4000/v1
       RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
-      # Outil de recherche dans les normes (MCP), déclaré d'office
-      TOOL_SERVER_CONNECTIONS: '[{"type":"mcp","url":"http://mcp-docs:9901/mcp","auth_type":"none","key":"","config":{"enable":true},"info":{"id":"docs-internes","name":"docs-internes","description":"Recherche dans les normes internes (ISO 7816, ISO 14443, GlobalPlatform)"}}]'
+      # Outil de recherche dans les normes (MCP), déclaré d'office et ouvert à tous les comptes
+      # (sans access_grants, Open WebUI le réserve aux admins). Lu au premier démarrage seulement : ensuite, la base fait foi.
+      TOOL_SERVER_CONNECTIONS: '[{"type":"mcp","url":"http://mcp-docs:9901/mcp","auth_type":"none","key":"","config":{"enable":true,"access_grants":[{"principal_type":"user","principal_id":"*","permission":"read"}]},"info":{"id":"docs-internes","name":"docs-internes","description":"Recherche dans les normes internes (ISO 7816, ISO 14443, GlobalPlatform)"}}]'
     volumes: ["open-webui:/app/backend/data"]
     ports: ["0.0.0.0:3000:8080"]
     depends_on: [litellm, qdrant]
+    logging: *logs
     restart: unless-stopped
 
 volumes:

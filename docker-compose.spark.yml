@@ -6,16 +6,26 @@
 #
 # Différences avec le PC :
 #  - modèle plus gros (voir .env.spark.example), mêmes noms côté clients (qwen-local, bge-m3)
+#  - vLLM réglé d'après les recettes vérifiées GB10 de recipes.vllm.ai, un profil par modèle (scripts/modeles.py)
 #  - TEI n'existe pas en ARM64 : embeddings et reranker servis par vLLM (mode pooling), sur GPU
-#  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur /, normes (MCP) sur /mcp avec jeton
+#  - seul Caddy (HTTPS) est joignable depuis le réseau : LiteLLM sur / (443), normes (MCP) sur /mcp avec jeton,
+#    Open WebUI sur le port 8443
 #  - le serveur MCP n'expose que rechercher_docs (OUTILS_CODE=0) : les agents travaillent sur les postes
+#
+# Configuration (compose, config/, scripts) = dossier du projet ; DONNÉES (modèles, caches, bases, documents) = WS_DIR (défaut ./ws).
+#
+# Toutes les images utilisées existent en arm64 (vérifié le 20/10/2026), sauf TEI, remplacé ici.
+
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
 
 x-vllm-pooling: &vllm-pooling
-  image: vllm/vllm-openai:v0.30.0
+  image: ${VLLM_POOLING_IMAGE:-vllm/vllm-openai:v0.30.0}
   entrypoint: ["vllm", "serve"]
   environment:
     HF_HUB_OFFLINE: "1"
-  volumes: ["./models:/models:ro"]
+  volumes: ["${WS_DIR:-./ws}/models:/models:ro"]
   ipc: host
   deploy:
     resources:
@@ -24,9 +34,51 @@ x-vllm-pooling: &vllm-pooling
   restart: unless-stopped
 
 services:
+  # Les options propres au modèle (parsers, backends, MTP…) viennent du profil actif :
+  # config/modeles-spark/<nom>.env, copié dans .env par  ./scripts/modeles.py utiliser <nom>
   vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+    command: >
+      /models/${VLLM_MODEL}
+      --served-model-name qwen-local
+      --host 0.0.0.0 --port 8000
+      --max-model-len ${VLLM_MAX_MODEL_LEN}
+      --gpu-memory-utilization ${VLLM_GPU_UTIL}
+      --max-num-seqs ${VLLM_MAX_SEQS}
+      --enable-auto-tool-choice --tool-call-parser ${VLLM_TOOL_PARSER:-qwen3_coder}
+      ${VLLM_SPEC_ARGS:-}
+      ${VLLM_EXTRA_ARGS:-}
+      ${VLLM_LORA_ARGS:-}
+    # Variables d'environnement propres au modèle (écrites par « utiliser »)
+    env_file:
+      - path: .env.vllm
+        required: false
+    # Clé exigée par vLLM sur /v1 (vide = aucune) : indispensable dès que vLLM écoute sur le réseau (SPARK-DUO.md)
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+    # Pas de VLLM_USE_RUST_FRONTEND : le frontend Rust refuse --media-io-kwargs / --mm-processor-cache-gb (profil Nemotron)
+    # et ignore --enable-auto-tool-choice (appels d'outils cassés). Les recettes NVIDIA gardent le frontend Python.
+    # Contrôle de santé sans curl (absent de certaines images) ; un gros modèle met longtemps à charger
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60m
+    # Comme dans toutes les recettes NVIDIA : mémoire partagée, mémoire verrouillée, caches de compilation persistants
+    shm_size: 16g
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    volumes: !override
+      - ${WS_DIR:-./ws}/models:/models:ro
+      - ${WS_DIR:-./ws}/loras:/loras:ro
+      - ${WS_DIR:-./ws}/cache/vllm:/root/.cache/vllm
+      - ${WS_DIR:-./ws}/cache/flashinfer:/root/.cache/flashinfer
+      - ${WS_DIR:-./ws}/cache/triton:/root/.triton
+    # VLLM_ECOUTE=0.0.0.0 (avec VLLM_API_KEY) quand LiteLLM tourne sur un serveur annexe
     ports: !override
-      - "127.0.0.1:8000:8000"
+      - "${VLLM_ECOUTE:-127.0.0.1}:8000:8000"
 
   tei-embed:
     <<: *vllm-pooling
@@ -44,15 +96,81 @@ services:
     environment:
       OUTILS_CODE: "0"
       RAG_BACKEND: vllm
+      # Adresse des liens « Sources » vue par le navigateur des utilisateurs (via Caddy)
+      DOCS_PUBLIC_URL: https://${SPARK_HOSTNAME}
+      # Journal du RAG (ids, scores, durées) pour comparer les modèles. Questions : hash (défaut), texte ou non
+      RAG_LOG_DIR: /logs/rag
+      RAG_LOG_QUESTIONS: ${RAG_LOG_QUESTIONS:-hash}
+      RAG_LOG_RETENTION_DAYS: ${RAG_LOG_RETENTION_DAYS:-90}
     ports: !reset []
+    volumes: !override
+      # DOCS_DIR dans .env pour lire les normes ailleurs (ex. ./docs-internes, le dossier du projet)
+      - ${DOCS_DIR:-${WS_DIR:-./ws}/docs-internes}:/docs:ro
+      - ${WS_DIR:-./ws}/workspace:/workspace
+      - ./finetune:/finetune:ro
+      - ${WS_DIR:-./ws}/data:/data
+      - ${WS_DIR:-./ws}/logs/rag:/logs/rag
+
+  # Données persistantes dans WS_DIR (et non dans des volumes cachés du stockage Docker)
+  postgres:
+    volumes: !override
+      - ${WS_DIR:-./ws}/postgres:/var/lib/postgresql/data
+
+  qdrant:
+    volumes: !override
+      - ${WS_DIR:-./ws}/qdrant:/qdrant/storage
 
   litellm:
     ports: !override
       - "127.0.0.1:4000:4000"
 
+  # OPEN_WEBUI_HTTP=0.0.0.0 dans .env : Open WebUI aussi en HTTP simple sur le réseau (http://<ip>:3000),
+  # sans nom ni certificat, mais mots de passe et conversations en clair. Défaut : local au Spark seulement.
   open-webui:
     ports: !override
-      - "127.0.0.1:3000:8080"
+      - "${OPEN_WEBUI_HTTP:-127.0.0.1}:3000:8080"
+    volumes: !override
+      - ${WS_DIR:-./ws}/open-webui:/app/backend/data
+
+  # ---- Métriques (comparaison des modèles et de la pile dans le temps) : un an d'historique dans WS_DIR/prometheus.
+  # Accessible depuis le Spark seulement : http://127.0.0.1:9090 (ou tunnel SSH). Requêtes utiles dans GUIDE.md.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-365d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-20GB}
+    # root : écrit dans WS_DIR sans dépendre de l'uid du compte de service (le port n'est ouvert qu'en local)
+    user: "0:0"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${WS_DIR:-./ws}/prometheus/cibles:/etc/prometheus/cibles:ro
+      - ${WS_DIR:-./ws}/prometheus/data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    logging: *logs
+    restart: unless-stopped
+
+  # GPU via nvidia-smi (injecté par le NVIDIA Container Toolkit, capacité « utility »)
+  gpu-exporter:
+    image: python:3.12-slim
+    command: ["python", "/app/exporter.py"]
+    volumes: ["./services/gpu-exporter/exporter.py:/app/exporter.py:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu, utility] }]
+    logging: *logs
+    restart: unless-stopped
+
+  # Machine : mémoire unifiée (le LLM y vit sur le GB10), CPU, disque, réseau (dont le câble QSFP en duo)
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    logging: *logs
+    restart: unless-stopped
 
   # Seule porte d'entrée réseau. Certificat interne : distribuer la CA aux postes (voir GUIDE.md).
   caddy:
@@ -62,10 +180,10 @@ services:
       MCP_TOKEN: ${MCP_TOKEN}
     volumes:
       - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-    ports: ["443:443"]
-    depends_on: [litellm, mcp-docs]
+      - ${WS_DIR:-./ws}/caddy:/data
+      # Journaux d'accès JSON (sans en-têtes d'authentification ni corps), pour les erreurs et latences par client
+      - ${WS_DIR:-./ws}/logs/caddy:/var/log/caddy
+    logging: *logs
+    ports: ["443:443", "8443:8443"]
+    depends_on: [litellm, mcp-docs, open-webui]
     restart: unless-stopped
-
-volumes:
-  caddy-data:
