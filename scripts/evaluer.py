@@ -4,6 +4,10 @@
   ./scripts/evaluer.py                    tout, pour le profil actif (VLLM_PROFIL du .env)
   ./scripts/evaluer.py --seulement normes,charge
   ./scripts/evaluer.py --concurrences 1,4,8,16
+  ./scripts/evaluer.py --profil <nom>     serveur annexe : lancé par modeles.py sur le Spark 1, par SSH
+
+Sur le serveur annexe (SERVEUR-ANNEXE.md), le profil vient de --profil, sinon du dernier profil « actif » de
+WS_DIR/logs/profils.jsonl (copié là par modeles.py), jamais du VLLM_PROFIL de son .env (copie du Spark 1, périmée).
 
 Le trafic réel change d'une semaine à l'autre : seul ce jeu fixe compare les modèles à conditions égales.
 Lancé automatiquement à la fin de  ./scripts/modeles.py utiliser <profil>  (--sans-eval pour l'éviter).
@@ -56,6 +60,20 @@ def ws_dir(env: dict) -> Path:
         return PROJET
     p = Path(v).expanduser()
     return p if p.is_absolute() else (PROJET / p).resolve()
+
+
+def profil_actif(env: dict) -> str:
+    """Dernier profil « actif » de l'historique (serveur annexe : copié depuis le Spark 1 par modeles.py)."""
+    f = ws_dir(env) / "logs" / "profils.jsonl"
+    if f.exists():
+        for ligne in reversed(f.read_text().splitlines()):
+            try:
+                e = json.loads(ligne)
+            except ValueError:
+                continue
+            if e.get("evenement") == "actif":
+                return e.get("profil", "")
+    return ""
 
 
 def cas(nom: str) -> list[dict]:
@@ -293,11 +311,16 @@ def main() -> None:
     ap.add_argument("--seulement", default="normes,outils,code,charge")
     ap.add_argument("--concurrences", default="1,4,8")
     ap.add_argument("--max-tokens-charge", type=int, default=512)
+    ap.add_argument("--profil", help="nom du profil évalué (défaut : VLLM_PROFIL du .env, sinon l'historique)")
     a = ap.parse_args()
     env = lire_env(PROJET / a.env)
     if not env.get("LITELLM_MASTER_KEY"):
         sys.exit("LITELLM_MASTER_KEY absente du .env")
-    profil = env.get("VLLM_PROFIL") or env.get("VLLM_MODEL") or "inconnu"
+    # Serveur annexe : son .env (copié du Spark 1) peut garder un VLLM_PROFIL périmé, l'historique fait foi
+    if "docker-compose.serveur.yml" in env.get("COMPOSE_FILE", ""):
+        profil = a.profil or profil_actif(env) or "inconnu"
+    else:
+        profil = a.profil or env.get("VLLM_PROFIL") or profil_actif(env) or env.get("VLLM_MODEL") or "inconnu"
     jeux = set(a.seulement.split(","))
     client = Client(a.url, env["LITELLM_MASTER_KEY"], a.modele)
     lignes: list[dict] = []

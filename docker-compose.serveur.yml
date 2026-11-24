@@ -1,36 +1,62 @@
-# Serveur annexe (PC ou serveur x86 du réseau, sans GPU) : tout SAUF le modèle, pour laisser la mémoire des Spark à vLLM.
-# ⚠ NON TESTÉ : voir SPARK-DUO.md, étape 6.
+# Serveur annexe (machine x86 du réseau, sans GPU) : tout SAUF le modèle, pour rendre la mémoire des Spark à vLLM.
+# ⚠ NON TESTÉ : voir SERVEUR-ANNEXE.md (ordre de déploiement, pare-feu, migration des données).
 #
-#   LiteLLM + Postgres, Open WebUI, Qdrant, MCP docs, Caddy (HTTPS) et embeddings/reranker (TEI sur CPU, image x86).
-#   Le modèle reste sur le Spark 1 (seul ou en duo), joint par le réseau : VLLM_API_BASE et VLLM_API_KEY dans .env.
+#   Caddy (HTTPS), LiteLLM + Postgres, Open WebUI, Qdrant, MCP docs, embeddings et reranker (TEI sur CPU),
+#   Prometheus (un an d'historique) et l'exporteur machine du serveur.
+#   Le modèle reste sur le Spark 1 (seul ou tête du duo), joint par le réseau : VLLM_API_BASE et VLLM_API_KEY dans .env.
 #
 #   Dans le .env du serveur :  COMPOSE_FILE=docker-compose.yml:docker-compose.serveur.yml
 #   docker compose up -d
 #
 # Les clients (OpenCode, navigateurs) visent ce serveur : SPARK_HOSTNAME = son nom sur le réseau.
+# Données dans WS_DIR, comme sur le Spark (mêmes sous-dossiers : on peut les recopier tels quels).
+
+x-logs: &logs
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
 
 services:
   # Jamais démarré ici : le modèle tourne sur le(s) Spark
   vllm:
     profiles: ["sur-le-spark"]
 
-  # Embeddings et reranker : TEI sur CPU, défini dans docker-compose.yml (bge-m3 et bge-reranker-v2-m3 dans WS_DIR/models)
+  # Embeddings et reranker : TEI sur CPU (image x86 de docker-compose.yml). bge-m3 en version ONNX :
+  # ./scripts/01-telecharger-modeles.sh --serveur (les poids PyTorch du Spark ne servent pas à TEI sur CPU)
   tei-embed:
+    environment:
+      OMP_NUM_THREADS: ${TEI_THREADS:-4}
     volumes: !override ["${WS_DIR:-./ws}/models:/models:ro"]
 
   tei-rerank:
+    environment:
+      OMP_NUM_THREADS: ${TEI_THREADS:-4}
     volumes: !override ["${WS_DIR:-./ws}/models:/models:ro"]
 
   mcp-docs:
     environment:
       OUTILS_CODE: "0"
+      # Embeddings et reranker : TEI sur CPU, ici (défaut). Une machine avec GPU peut les servir à la place :
+      # EMBED_URL / RERANK_URL dans .env (RAG_BACKEND=vllm si c'est vLLM en mode pooling). SERVEUR-ANNEXE.md, section 8
+      EMBED_URL: ${EMBED_URL:-http://tei-embed}
+      RERANK_URL: ${RERANK_URL:-http://tei-rerank}
+      RAG_BACKEND: ${RAG_BACKEND:-tei}
+      # Passages relus par le reranker par recherche (20 par défaut) : le levier de vitesse du RAG sur CPU
+      RAG_CANDIDATS: ${RAG_CANDIDATS:-20}
+      # Liens « Sources » des réponses, vus par le navigateur des utilisateurs (via Caddy)
       DOCS_PUBLIC_URL: https://${SPARK_HOSTNAME}
+      # Transcription des images à l'indexation : le modèle, sur le Spark 1
+      VISION_URL: ${VLLM_API_BASE:?VLLM_API_BASE manquant dans .env (adresse de vLLM sur le Spark 1, SERVEUR-ANNEXE.md)}
+      # Journal du RAG (ids, scores, durées) pour comparer les modèles. Questions : hash (défaut), texte ou non
+      RAG_LOG_DIR: /logs/rag
+      RAG_LOG_QUESTIONS: ${RAG_LOG_QUESTIONS:-hash}
+      RAG_LOG_RETENTION_DAYS: ${RAG_LOG_RETENTION_DAYS:-90}
     ports: !reset []
     volumes: !override
       - ${DOCS_DIR:-${WS_DIR:-./ws}/docs-internes}:/docs:ro
       - ${WS_DIR:-./ws}/workspace:/workspace
       - ./finetune:/finetune:ro
       - ${WS_DIR:-./ws}/data:/data
+      - ${WS_DIR:-./ws}/logs/rag:/logs/rag
 
   postgres:
     volumes: !override
@@ -41,16 +67,49 @@ services:
       - ${WS_DIR:-./ws}/qdrant:/qdrant/storage
 
   litellm:
+    environment:
+      # Pas de repli silencieux sur http://vllm:8000 : ce nom n'existe pas ici
+      VLLM_API_BASE: ${VLLM_API_BASE:?VLLM_API_BASE manquant dans .env (adresse de vLLM sur le Spark 1, SERVEUR-ANNEXE.md)}
     ports: !override
       - "127.0.0.1:4000:4000"
 
+  # OPEN_WEBUI_HTTP=0.0.0.0 dans .env : Open WebUI aussi en HTTP simple sur le réseau (mots de passe en clair).
   open-webui:
     ports: !override
       - "${OPEN_WEBUI_HTTP:-127.0.0.1}:3000:8080"
     volumes: !override
       - ${WS_DIR:-./ws}/open-webui:/app/backend/data
 
-  # Même porte d'entrée que sur le Spark (config/Caddyfile.spark)
+  # ---- Métriques : celles des Spark (vLLM, GPU, machine) sont lues par le réseau de l'équipe, celles d'ici en local.
+  # Cibles des Spark : WS_DIR/prometheus/cibles/*.json, écrites sur le Spark 1 par modeles.py et copiées ici par SSH.
+  # http://127.0.0.1:9090 sur le serveur (ou tunnel SSH). Même dossier de données que sur le Spark : l'historique se recopie.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-365d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-20GB}
+    user: "0:0"
+    volumes:
+      - ./config/prometheus/prometheus.serveur.yml:/etc/prometheus/prometheus.yml:ro
+      - ${WS_DIR:-./ws}/prometheus/cibles:/etc/prometheus/cibles:ro
+      - ${WS_DIR:-./ws}/prometheus/data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    logging: *logs
+    restart: unless-stopped
+
+  # Le serveur lui-même : CPU (embeddings à l'indexation), mémoire, disque
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    logging: *logs
+    restart: unless-stopped
+
+  # Seule porte d'entrée réseau, comme sur le Spark (config/Caddyfile.spark).
+  # Recopier WS_DIR/caddy du Spark 1 garde la même autorité de certification : les postes n'ont rien à réinstaller.
   caddy:
     image: caddy:2.10.2
     environment:
@@ -59,6 +118,9 @@ services:
     volumes:
       - ./config/Caddyfile.spark:/etc/caddy/Caddyfile:ro
       - ${WS_DIR:-./ws}/caddy:/data
+      # Journaux d'accès JSON (sans en-têtes d'authentification ni corps), roulés par Caddy (50 Mo x 10, 90 jours)
+      - ${WS_DIR:-./ws}/logs/caddy:/var/log/caddy
     ports: ["443:443", "8443:8443"]
     depends_on: [litellm, mcp-docs, open-webui]
+    logging: *logs
     restart: unless-stopped

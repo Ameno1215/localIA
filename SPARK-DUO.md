@@ -14,7 +14,7 @@ Postes ──HTTPS──> Spark 1 : Caddy, Open WebUI, LiteLLM, Postgres, Qdrant
                   Spark 2 : ray-worker (autre moitié du modèle), rien d'autre
 ```
 
-Un serveur annexe pour décharger le Spark 1 reste possible plus tard (annexe en fin de document), mais il n'est pas nécessaire.
+Un serveur annexe peut décharger le Spark 1 de tout sauf vLLM : [SERVEUR-ANNEXE.md](SERVEUR-ANNEXE.md) (non testé).
 
 ## 1. Pourquoi le duo
 
@@ -350,41 +350,8 @@ Pendant le duo, lancer **toutes** les commandes (`docker compose …`, `./script
 
 ---
 
-## Annexe : serveur annexe (mis de côté, non testé)
+## Annexe : serveur annexe
 
-Idée initiale, mise en attente : sortir des Spark tout ce qui n'est pas le modèle (LiteLLM, Open WebUI, embeddings, bases, MCP, Caddy) vers une machine x86 ordinaire, pour rendre leur mémoire au modèle. **Rien de cette annexe n'a tourné.**
-
-Ce que chaque service occupe sur le Spark 1 (ordre de grandeur, à confirmer avec `docker stats` et `free -g`) :
-
-| Service | Mémoire | Peut partir ? |
-|---|---|---|
-| Embeddings + reranker (TEI) | ~10 Go réservés + 2–4 Go de processus | Oui : sur le serveur, TEI sur CPU |
-| Open WebUI | 1–2 Go | Oui |
-| LiteLLM + Postgres | 1–2 Go | Oui |
-| Qdrant, MCP docs, Caddy | < 1 Go chacun | Oui |
-| Bureau graphique d'Ubuntu (DGX OS) | 1–3 Go | Le désactiver : `sudo systemctl set-default multi-user.target` puis redémarrer |
-| vLLM | le reste | Non : c'est le modèle |
-
-Gain attendu : 15 à 20 Go rendus au modèle sur le Spark 1.
-
-**Le serveur :** une machine x86 Linux avec Docker, sans GPU, 16 Go de RAM et 4 cœurs (les embeddings sur CPU ralentissent l'indexation, pas la recherche).
-
-Mise en place :
-1. **Sur le serveur :** cloner le projet, `./scripts/preparer-env-spark.sh <nom-du-serveur> <dossier-de-données>`, puis dans son `.env` :
-   ```bash
-   COMPOSE_FILE=docker-compose.yml:docker-compose.serveur.yml
-   VLLM_API_BASE=http://spark1.lan:8000/v1   # le Spark 1 (seul ou tête du duo)
-   VLLM_API_KEY=<la même clé que sur le Spark 1>
-   ```
-2. **Copier les embeddings** (`bge-m3`, `bge-reranker-v2-m3`) depuis `WS_DIR/models` du Spark 1.
-3. **Reprendre les données** : arrêter la pile du Spark 1, copier `postgres/`, `open-webui/`, `qdrant/` et `docs-internes/` de son `WS_DIR` vers celui du serveur, puis relancer l'indexation.
-4. **Démarrer le serveur :** `docker compose up -d` (le service `vllm` n'y est jamais lancé).
-5. **Sur le Spark 1 :** `VLLM_ECOUTE=0.0.0.0` dans le `.env` (inutile en duo), puis ne démarrer que le modèle : `docker compose down && docker compose up -d vllm`. Monter `VLLM_GPU_UTIL` par paliers. Pare-feu : `sudo ufw allow from <ip-du-serveur> to any port 8000 proto tcp`.
-6. **Postes :** ils visent désormais le serveur ; distribuer le nouveau certificat de Caddy (section 8 du GUIDE) et relancer `installer-opencode.sh --serveur https://<serveur> …`.
-
-```
-Postes ──HTTPS──> Serveur annexe : Caddy, LiteLLM, Postgres, Open WebUI, Qdrant, MCP, TEI (CPU)
-                        │  http://spark1:8000 + VLLM_API_KEY
-                        ▼
-                  Spark 1 : vLLM (tête Ray) ══ câble QSFP ══ Spark 2 : Ray worker
-```
+Sortir des Spark tout ce qui n'est pas le modèle (LiteLLM, Open WebUI, embeddings, bases, MCP, Caddy, Prometheus) vers
+une machine x86 ordinaire, pour monter `VLLM_GPU_UTIL` de 0.68 à environ 0.85 : voir [SERVEUR-ANNEXE.md](SERVEUR-ANNEXE.md)
+(⚠ non testé).
