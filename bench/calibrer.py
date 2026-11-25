@@ -5,7 +5,7 @@ Le ratio est enregistré dans resultats/calibration.json et repris par toutes le
 """
 import json
 
-from bench.commun import Generateur, chat, charger_config, cle_maitre, dossier_resultats, role
+from bench.commun import Generateur, chat, charger_config, cle_directe, cle_maitre, dossier_resultats, role
 
 
 def options(p):
@@ -21,7 +21,7 @@ def lancer(args):
     n_mots = 2000
     texte = gen.texte(n_mots)
     reel = len(texte.split())
-    m = chat(base, cle_maitre(), r["modele"], [{"role": "user", "content": texte}], max_tokens=1, timeout=120)
+    m = chat(base, cle_directe(r, cle_maitre()) if args.direct else cle_maitre(), r["modele"], [{"role": "user", "content": texte}], max_tokens=1, timeout=120)
     if not m.ok or not m.tokens_entree:
         print(f"Échec de la calibration : statut {m.statut} {m.erreur}")
         return 1

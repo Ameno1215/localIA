@@ -5,6 +5,11 @@
 #   NOEUDS="spark1 spark2 spark3 spark4" IB_DEV=rocep1s0f1 IFACE=enp1s0f1np1 \
 #   NCCL_TESTS=/opt/nccl-tests/build ./bench/reseau.sh
 #
+# Duo (SPARK-DUO.md) : les IP du câble, et le compte de chaque Spark dans ~/.ssh/config (Host 192.168.100.11 /
+# User admin_spark19e5), pour que ssh, ib_write_bw et mpirun passent tous par le câble :
+#   NOEUDS="192.168.100.10 192.168.100.11" IB_DEV=rocep1s0f0 IFACE=enp1s0f0np0 \
+#   NCCL_HCA=rocep1s0f0,roceP2p1s0f0 ./bench/reseau.sh
+#
 # Mesure : relevé thermique/fréquence de chaque nœud, bande passante RoCE de chaque paire
 # (ib_write_bw, paquet perftest), bande passante bus NCCL all_reduce sur 2 puis tous les nœuds
 # (3 essais chacun, écart < 5 % attendu), et compteurs drop/discard/pause avant/après.
@@ -17,6 +22,7 @@ IB_DEV=${IB_DEV:?IB_DEV requis (ex. rocep1s0f1, voir ibv_devices)}
 IFACE=${IFACE:?IFACE requis (interface RoCE, ex. enp1s0f1np1)}
 NCCL_TESTS=${NCCL_TESTS:-/opt/nccl-tests/build}
 ESSAIS=${ESSAIS:-3}
+NCCL_HCA=${NCCL_HCA:-$IB_DEV}   # cartes RDMA utilisées par NCCL (les deux moitiés du port en duo)
 SORTIE=${BENCH_RESULTATS:-bench/resultats}
 mkdir -p "$SORTIE"
 TMP=$(mktemp -d)
@@ -52,10 +58,12 @@ done
 
 echo "== NCCL all_reduce_perf"
 : > "$TMP/nccl"
-for nb in 2 ${#NOEUDS[@]}; do
+for nb in $(printf '%s\n' 2 ${#NOEUDS[@]} | sort -un); do   # 2 nœuds, puis tous (une fois en duo)
   hotes=$(IFS=,; echo "${NOEUDS[*]:0:$nb}")
   for ((e = 1; e <= ESSAIS; e++)); do
-    bus=$(mpirun -np "$nb" -H "$hotes" "$NCCL_TESTS/all_reduce_perf" -b 8 -e 4G -f 2 -g 1 2>&1 \
+    bus=$(mpirun -np "$nb" -H "$hotes" \
+      -x NCCL_IB_HCA="$NCCL_HCA" -x NCCL_SOCKET_IFNAME="$IFACE" -x NCCL_IB_GID_INDEX="${NCCL_GID_INDEX:-3}" \
+      "$NCCL_TESTS/all_reduce_perf" -b 8 -e 4G -f 2 -g 1 2>&1 \
       | awk -F: '/Avg bus bandwidth/ {gsub(/ /, "", $2); print $2}')
     echo "  $nb nœuds, essai $e : ${bus:-échec} Go/s"
     echo "$nb $e ${bus:-0}" >> "$TMP/nccl"

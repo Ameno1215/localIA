@@ -114,32 +114,32 @@ modele_agent = ""           # ex. "ia-locale/qwen-local" ; vide = modèle par d�
 role_vision = ""            # pas de modèle vision sur le PC de test
 
 # ---------------------------------------------------------------------------
-# Grappe 4× DGX Spark, option A du benchmark :
-#   nœuds 1+2 DeepSeek-V4-Flash (TP=2), nœud 3 Qwen3.6-35B-A3B, nœud 4 Qwen3.8-27B + RAG.
-# Adapter les noms d'hôtes, les noms de modèles LiteLLM et les ports à l'installation réelle.
+# Duo de DGX Spark validé le 09/11/2026 (SPARK-DUO.md, branche spark-duo) :
+#   un seul modèle, servi sous le nom qwen-local, réparti sur les deux Spark (tensor parallel 2, Ray) ;
+#   Spark 1 (spark-4c7c) : vLLM (tête Ray) + LiteLLM, Postgres, Qdrant, TEI (vLLM pooling), MCP, Caddy ;
+#   Spark 2 (spark-19e5) : ray-worker seulement.
+#
+# À lancer SUR LE SPARK 1, depuis le dossier duo (/home/admin_spark4c7c/data/ws/ia-locale-duo) :
+#   - LiteLLM n'écoute que sur 127.0.0.1:4000 (le réseau passe par Caddy en HTTPS) ;
+#   - vLLM est sur le réseau de l'hôte, mais le pare-feu ne l'ouvre qu'au câble et à Docker, et il exige
+#     VLLM_API_KEY (lue dans .env grâce à cle_env) ;
+#   - les commandes des pannes (docker compose …) visent la pile duo de ce dossier.
+#
+# Le profil de modèle actif (scripts/modeles.py) fixe le contexte et VLLM_MAX_SEQS : à 8 (profils actuels),
+# vLLM ne traite jamais plus de 8 requêtes à la fois, et le genou de la phase 1 ne peut pas dépasser 8.
+# Les paliers au-delà montrent la file d'attente. Pour viser genou_code_agent (15), monter VLLM_MAX_SEQS.
 # ---------------------------------------------------------------------------
 [profils.spark]
-passerelle = "http://spark1.lan:4000"
-metriques = [
-  "http://spark1.lan:8000/metrics",
-  "http://spark3.lan:8000/metrics",
-  "http://spark4.lan:8000/metrics",
-]
+passerelle = "http://127.0.0.1:4000"
+metriques = ["http://127.0.0.1:8000/metrics"]
 
 [profils.spark.roles.code-agent]
-modele = "code-agent"
-direct = "http://spark1.lan:8000"
-
-[profils.spark.roles.fast]
-modele = "fast"
-direct = "http://spark3.lan:8000"
-
-[profils.spark.roles.vision]
-modele = "vision"
-direct = "http://spark4.lan:8000"
+modele = "qwen-local"
+direct = "http://127.0.0.1:8000"
+cle_env = "VLLM_API_KEY"
 
 [profils.spark.capacite]
-niveaux = [1, 2, 4, 8, 12, 16, 24, 32, 48]
+niveaux = [1, 2, 4, 6, 8, 12, 16]
 longueurs = [4000, 32000, 64000]
 duree_palier_s = 180
 max_tokens = 512
@@ -155,19 +155,19 @@ systeme_tokens = 6000
 reflexion_s = [5, 30]
 max_tokens = 512
 prob_rag = 0.2
-modele_embeddings = "embeddings"
+modele_embeddings = "bge-m3"
 max_parallel_par_cle = 4
 
 [profils.spark.charge.melange]
-code-agent = 0.6
-fast = 0.3
-vision = 0.1
+code-agent = 1.0            # un seul modèle en duo
 
+# Dans le réseau Docker du Spark 1 (TEI n'a pas de port publié), voir bench/README.md, phase 3 :
+#   docker compose run --rm --no-deps -v ./bench:/b/bench -w /b mcp-docs python -m bench rag --profil spark
 [profils.spark.rag]
 backend = "vllm"
-embed = "http://spark4.lan:8001"
-rerank = "http://spark4.lan:8002"
-qdrant = "http://spark4.lan:6333"
+embed = "http://tei-embed"
+rerank = "http://tei-rerank"
+qdrant = "http://qdrant:6333"
 collection = "docs_internes"
 questions = "bench/donnees/questions_rag.jsonl"
 concurrences = [1, 8, 16, 32]
@@ -178,32 +178,42 @@ candidats_rerank = 50
 role = "code-agent"
 requetes_gourmandes = 20
 plafond_sans_max_tokens = 8192
-concurrence_outils = 16
+concurrence_outils = 8
 essais_outils = 100
 
+# Pas de modèle de repli en duo : chaque panne coupe le service, on mesure le temps de retour (< 10 min).
 [[profils.spark.pannes]]
-nom = "fast-vllm-tue"
-role = "fast"
-consigne = "Sur spark3 : docker compose stop vllm. LiteLLM doit basculer fast sur son repli."
+nom = "vllm-redemarrage"
+role = "code-agent"
+consigne = "Redémarrage de vLLM sur le Spark 1 (la tête attend le Spark 2 puis recharge le modèle, 2 à 4 min)."
+commande = "docker compose restart vllm"
 
 [[profils.spark.pannes]]
-nom = "noeud2-redemarrage"
+nom = "spark2-ray-worker"
 role = "code-agent"
-consigne = "Redémarre spark2 (sudo reboot). Le code-agent TP=2 tombe ; le repli doit prendre le relais."
+consigne = "Redémarrage du ray-worker du Spark 2 : vLLM perd sa moitié du modèle, plante et redémarre seul."
+commande = "ssh admin_spark19e5@192.168.100.11 'cd ~/data/ws/ia-locale-duo && docker compose restart ray-worker'"
 
 [[profils.spark.pannes]]
-nom = "lien-200gbe"
+nom = "cable-qsfp"
 role = "code-agent"
-consigne = "Débranche un câble 200 GbE d'une paire TP pendant 60 s, puis rebranche-le."
+consigne = "Débranche le câble QSFP entre les deux Spark pendant 60 s, puis rebranche-le."
+
+[[profils.spark.pannes]]
+nom = "spark2-redemarrage"
+role = "code-agent"
+consigne = "Redémarre le Spark 2 (sudo reboot), puis relance son ray-worker si besoin (SPARK-DUO.md, section 6)."
 
 [[profils.spark.pannes]]
 nom = "litellm-redemarrage"
 role = "code-agent"
-consigne = "Sur spark1 : docker compose restart postgres litellm. Aucune clé ne doit être perdue."
+consigne = "Redémarrage de Postgres et LiteLLM sur le Spark 1. Aucune clé ne doit être perdue."
+commande = "docker compose restart postgres litellm"
 
+# OpenCode tourne sur un poste configuré vers le Spark (installer-opencode.sh) : lancer cette phase depuis le poste.
 [profils.spark.qualite]
 taches = "bench/donnees/taches"
 commande_agent = ["opencode", "run", "--auto"]
 modele_agent = ""
-role_vision = "vision"
+role_vision = "code-agent"  # le profil Nemotron 3.5 Super VL lit les images ; vider avec un modèle texte seul
 questions_vision = "bench/donnees/questions_vision.jsonl"

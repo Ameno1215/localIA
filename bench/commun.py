@@ -62,6 +62,18 @@ def cle_maitre() -> str:
             or lire_env_fichier().get("LITELLM_MASTER_KEY") or "")
 
 
+def cle_directe(r: dict, defaut: str = "") -> str:
+    """Clé pour interroger vLLM en direct. Le rôle peut nommer une variable avec `cle_env` (VLLM_API_KEY en duo,
+    où vLLM écoute sur le réseau de l'hôte), lue dans l'environnement puis dans .env ; sinon `defaut`."""
+    nom = r.get("cle_env")
+    if not nom:
+        return defaut
+    valeur = os.environ.get(nom) or lire_env_fichier().get(nom)
+    if not valeur:
+        raise SystemExit(f"{nom} introuvable (environnement ou .env) : vLLM en direct l'exige pour ce rôle")
+    return valeur
+
+
 def role(cfg: dict, nom: str) -> dict:
     try:
         return cfg["roles"][nom]

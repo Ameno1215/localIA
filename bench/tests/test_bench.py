@@ -32,6 +32,16 @@ class TestUnitaires(unittest.TestCase):
         self.assertEqual(r["erreurs"], {"429": 1})
         self.assertAlmostEqual(r["vitesse_p95"], 10.0)
 
+    def test_cle_directe(self):
+        self.assertEqual(commun.cle_directe({}, "maitre"), "maitre")
+        os.environ["BENCH_TEST_CLE_VLLM"] = "sk-vllm"
+        try:
+            self.assertEqual(commun.cle_directe({"cle_env": "BENCH_TEST_CLE_VLLM"}, "maitre"), "sk-vllm")
+        finally:
+            del os.environ["BENCH_TEST_CLE_VLLM"]
+        with self.assertRaises(SystemExit):
+            commun.cle_directe({"cle_env": "BENCH_TEST_CLE_ABSENTE"}, "maitre")
+
     def test_generateur_longueur(self):
         g = commun.Generateur(graine=1, tokens_par_mot=2.0)
         self.assertEqual(len(g.texte(1000).split()), 500)

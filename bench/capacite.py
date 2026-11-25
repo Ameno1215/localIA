@@ -16,8 +16,8 @@ Pour comparer avec et sans cache de préfixe, relancer vLLM sans --enable-prefix
 import threading
 import time
 
-from bench.commun import (Generateur, Surveillance, afficher_palier, chat, charger_config, cle_maitre,
-                          contexte_max, resumer, role, sauver)
+from bench.commun import (Generateur, Surveillance, afficher_palier, chat, charger_config, cle_directe,
+                          cle_maitre, contexte_max, resumer, role, sauver)
 
 SUFFIXE = 2000
 CONSIGNE = "\n\nRésume ce qui précède en une liste de points, de façon détaillée."
@@ -79,7 +79,8 @@ def lancer(args):
     for nom_role in roles:
         r = role(cfg, nom_role)
         base = cfg["passerelle"] if args.via_passerelle else r["direct"]
-        cmax = contexte_max(r["direct"], r["modele"], cle) or r.get("contexte_max")
+        cle_d = cle_directe(r, cle)
+        cmax = contexte_max(r["direct"], r["modele"], cle_d) or r.get("contexte_max")
         vmin = slo["vitesse_min"].get(nom_role, 20.0)
         print(f"\n=== {nom_role} ({r['modele']} via {base}) — contexte max {cmax or 'inconnu'} ===")
         essais = []
@@ -105,7 +106,7 @@ def lancer(args):
 
                 paliers, genou = [], None
                 for n in niveaux:
-                    mesures, ecoule, metriques = palier(base, cle, r["modele"], n, duree, fabrique,
+                    mesures, ecoule, metriques = palier(base, cle if args.via_passerelle else cle_d, r["modele"], n, duree, fabrique,
                                                         max_tokens, cfg.get("metriques", []))
                     chaudes = [m for m in mesures if mode == "froid" or m.info["rang"] > 0]
                     res = resumer(chaudes or mesures, ecoule)

@@ -16,7 +16,7 @@ import threading
 import time
 
 from bench.charge import creer_cles, supprimer_cles
-from bench.commun import Generateur, chat, charger_config, cle_maitre, contexte_max, resumer, role, sauver
+from bench.commun import Generateur, chat, charger_config, cle_directe, cle_maitre, contexte_max, resumer, role, sauver
 
 OUTIL = [{
     "type": "function",
@@ -40,7 +40,7 @@ def options(p):
 
 
 def test_trop_long(cfg, r, cle):
-    cmax = contexte_max(r["direct"], r["modele"], cle) or r.get("contexte_max")
+    cmax = contexte_max(r["direct"], r["modele"], cle_directe(r, cle)) or r.get("contexte_max")
     if not cmax:
         return {"ignore": "contexte max inconnu (ajoute contexte_max au rôle dans la config)"}
     n = int(cmax * 1.2)
