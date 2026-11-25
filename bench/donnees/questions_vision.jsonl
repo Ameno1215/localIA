@@ -1,0 +1,3 @@
+// Une question par ligne : {"image": chemin relatif à ce fichier, "question", "attendus": [mots-clés]}.
+// Exemple (à décommenter avec une vraie capture de table de registres) :
+// {"image": "images/rcc_cr.png", "question": "Quel bit du registre RCC_CR active l'oscillateur HSE ?", "attendus": ["HSEON", "16"]}

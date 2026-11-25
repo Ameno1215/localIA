@@ -30,3 +30,6 @@ diagnostic-spark-*.txt
 
 # Benchmarks publics sans WS_DIR (scripts/bench-public.py) : jeux téléchargés, réponses des modèles
 /benchmarks/
+
+# Résultats de la suite de tests de charge (bench/)
+bench/resultats/

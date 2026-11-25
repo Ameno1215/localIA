@@ -1,0 +1,8 @@
+// Une question par ligne : {"question", "source" (sous-chaîne du nom de fichier), "page" facultative}.
+// Exemples sur la norme fictive du dépôt ; remplacer par ~30 questions sur vos vraies datasheets.
+{"question": "Quelle couverture de tests minimale est exigée pour chaque module Python ?", "source": "NORME-DEV-001"}
+{"question": "A-t-on le droit d'utiliser print() dans le code livré ?", "source": "NORME-DEV-001"}
+{"question": "Comment doivent être masquées les adresses e-mail dans les journaux ?", "source": "NORME-DEV-001"}
+{"question": "Quelle convention de nommage s'applique aux classes et aux constantes ?", "source": "NORME-DEV-001"}
+{"question": "Que faire quand on attrape une exception avec except Exception ?", "source": "NORME-DEV-001"}
+{"question": "Quels niveaux de journalisation sont autorisés en production ?", "source": "NORME-DEV-001"}

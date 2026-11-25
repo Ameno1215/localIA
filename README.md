@@ -17,6 +17,7 @@ Elle tourne aujourd'hui sur un PC de test (RTX 8 Go) et est prête à passer sur
 | [docs/](docs/) | Notes, réflexions, décisions et schémas d'architecture (Markdown + Mermaid) |
 | [AUDIT-NVIDIA.md](AUDIT-NVIDIA.md) | Écarts avec les tutoriels et recettes officiels NVIDIA, et corrections faites |
 | [PLAN-EVALUATION.md](PLAN-EVALUATION.md) | Comparer les modèles : benchmarks publics prêts à lancer (`scripts/bench-public.py`) et plan par cas d'usage (code C, bugs, doc, exigences, RAG, charge) |
+| [bench/README.md](bench/README.md) | Tests de charge et de limites du cluster Spark (phases 0 à 7 du plan de test, jusqu'au tableau go / no-go) |
 
 ## Démarrage rapide
 
